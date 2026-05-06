@@ -68,3 +68,16 @@ configs/local_*.yaml
 Thumbs.db
 
 
+# LaTeX auxiliary files
+papers/**/*.aux
+papers/**/*.log
+papers/**/*.toc
+papers/**/*.out
+papers/**/*.fdb_latency
+papers/**/*.fls
+papers/**/*.synctex.gz
+papers/**/*.bbl
+papers/**/*.blg
+
+# Final Build (Optional: Keep if you want the PDF versioned, remove if not)
+# papers/*.pdf

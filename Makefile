@@ -8,6 +8,8 @@ MLFLOW     := .venv/bin/mlflow
 CFG        := config/pipeline.yaml
 TRACK      ?= b
 SIZE       ?= 99m
+# Default installation mode
+MODE 	   ?= full
 
 include .env
 export $(shell sed 's/=.*//' .env)
@@ -27,15 +29,29 @@ export $(shell sed 's/=.*//' .env)
 # ─────────────────────────────────────────────
 # ENVIRONMENT
 # ─────────────────────────────────────────────
+# Logic to determine which dependency groups to install
+ifeq ($(MODE),research)
+    INSTALL_TARGET := .[research]
+    KERNEL_DESC := "Python (WAF-KD Research)"
+else
+    INSTALL_TARGET := .[dev,research,full]
+    KERNEL_DESC := "Python (WAF-KD Full Stack)"
+endif
+
 setup:
+	@echo "=== Initializing environment in [$(MODE)] mode ==="
 	python -m venv .venv
 	.venv/bin/pip install --upgrade pip
-	.venv/bin/pip install -e ".[dev]"
+	.venv/bin/pip install -e "$(INSTALL_TARGET)"
+	# Create directory structure
 	mkdir -p data/{raw,normalized,augmented/{rules,grammar,local_llm,api_llm,benign},filtered,splits} \
 	         models/{baselines,track_a,track_b,student} \
 	         tokenizers/{track_a,track_b} \
 	         reports/{metrics,figures,latency} \
 	         mlruns
+	# Register the kernel automatically
+	$(PYTHON) -m ipykernel install --user --name=waf-kd --display-name $(KERNEL_DESC)
+	@echo "Setup complete. Virtual environment mode: $(MODE)"
 
 # ─────────────────────────────────────────────
 # STAGE 0 — BASELINES & INFRASTRUCTURE

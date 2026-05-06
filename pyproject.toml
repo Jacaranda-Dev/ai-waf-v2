@@ -19,16 +19,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest",
+# For students writing docs, running notebooks, and reading code logic
+research = [
+    "jupyterlab",
+    "ipykernel",
+    "matplotlib",
+    "seaborn",
+    "pandas",
+    "pyyaml",
     "ruff",
     "mypy"
 ]
-notebook = [
-    "jupyterlab",
-    "ipywidgets",
-    "matplotlib",
-    "seaborn"
+# For students training models and running the full pipeline
+full = [
+    "torch",
+    "transformers",
+    "mlflow",
+    "onnxruntime",
+    "scikit-learn",
+    "onnx"
 ]
 
 [tool.setuptools.packages.find]
