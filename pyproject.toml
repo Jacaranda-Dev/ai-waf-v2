@@ -18,7 +18,19 @@ dependencies = [
     "tensorrt"
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy"
+]
+notebook = [
+    "jupyterlab",
+    "ipywidgets",
+    "matplotlib",
+    "seaborn"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ai-waf-v2*"]
+include = ["stages*", "utils*", "ai-waf-v2*"]

@@ -65,6 +65,9 @@ dirs=(
 
     # tests
     tests
+
+    # notebooks
+    notebooks
 )
 
 for d in "${dirs[@]}"; do
@@ -349,6 +352,7 @@ gitkeep_dirs=(
     reports/figures
     reports/latency
     mlruns
+    notebooks
 )
 for d in "${gitkeep_dirs[@]}"; do
     touch "$d/.gitkeep"
