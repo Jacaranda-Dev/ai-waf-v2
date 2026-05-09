@@ -1,0 +1,113 @@
+"""
+stages/7_evaluation/09_model_size_scaling.py
+-----------------------------------------
+All four ablation studies in one file (dispatched by script name).
+Each ablation trains a fast probe model (LR + TF-IDF) to isolate
+the variable of interest without requiring full transformer training.
+
+For full transformer ablations, use MLflow to compare existing runs:
+these scripts compare saved checkpoints and report metrics.
+
+Run:
+    python stages/7_evaluation/09_model_size_scaling.py  --config config/pipeline.yaml
+
+"""
+from __future__ import annotations
+import argparse, json, sys
+from pathlib import Path
+import torch
+
+from ai_waf_v2.utils.config import load_config
+from ai_waf_v2.utils.logging import configure_root, get_logger
+
+log = get_logger(__name__)
+
+
+
+
+# ─────────────────────────────────────────────────────────
+# 09 — Model size scaling
+# ─────────────────────────────────────────────────────────
+
+def model_size_scaling(cfg) -> dict:
+    """Load all saved checkpoints and plot accuracy vs parameter count."""
+    import json
+    from ai_waf_v2.models.head import WafClassifier
+    from ai_waf_v2.models.student import StudentClassifier
+
+    checkpoints = [
+        ("student",    Path(cfg.model.student.output_dir)/"best_student.pt",      cfg.model.student,      True),
+        ("teacher_99m",Path(cfg.model.track_b_99m.output_dir)/"best_99m.pt",      cfg.model.track_b_99m,  False),
+    ]
+
+    reports_dir = Path(cfg.paths.reports) / "metrics"
+    det_path    = reports_dir / "detection_results.json"
+    if not det_path.exists():
+        return {"error": "detection_results.json not found — run Stage 6.1 first"}
+
+    det = json.loads(det_path.read_text())
+    results = {}
+
+    for label, ckpt, arch_cfg, is_student in checkpoints:
+        if not ckpt.exists(): continue
+        n_params = sum(p.numel() for p in
+                       (StudentClassifier.from_config(arch_cfg) if is_student
+                        else WafClassifier.from_config(arch_cfg)).parameters())
+        m = det.get(label, {}).get("overall", {})
+        results[label] = {
+            "n_params":  n_params,
+            "auc_pr":    m.get("auc_pr"),
+            "f1":        m.get("f1"),
+            "fpr":       m.get("fpr"),
+        }
+        log.info(f"  {label:20s}: params={n_params:,}  AUC-PR={m.get('auc_pr'):.4f}")
+
+    # Add baselines
+    baselines_path = reports_dir / "baselines.json"
+    if baselines_path.exists():
+        baselines = json.loads(baselines_path.read_text())
+        for name, data in baselines.items():
+            m = data.get("overall", data.get("val_metrics", {}))
+            results[name] = {"n_params": "N/A", "auc_pr": m.get("auc_pr"), "f1": m.get("f1")}
+
+    out = reports_dir / "model_size_scaling.json"
+    out.write_text(json.dumps(results, indent=2))
+    log.info(f"Model size scaling saved to {out}")
+    return results
+
+
+
+# ─────────────────────────────────────────────────────────
+# Dispatch
+# ─────────────────────────────────────────────────────────
+
+DISPATCH = {
+    "07_tokenizer_ablation":        tokenizer_ablation,
+    "08_augmentation_ablation":     augmentation_ablation,
+    "09_model_size_scaling":        model_size_scaling,
+    "10_label_smoothing_ablation":  label_smoothing_ablation,
+}
+
+
+def run(args: argparse.Namespace) -> None:
+    configure_root()
+    cfg = load_config(args.config)
+    script_name = Path(sys.argv[0]).stem
+    fn = DISPATCH.get(script_name)
+    if fn is None:
+        # Run all
+        for name, fn in DISPATCH.items():
+            log.info(f"\n{'='*40}\n{name}\n{'='*40}")
+            fn(cfg)
+    else:
+        fn(cfg)
+
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", default="config/pipeline.yaml")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    run(parse_args())

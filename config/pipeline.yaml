@@ -1,0 +1,301 @@
+# ai_waf_v2. pipeline Configuration
+# All hyperparameters, paths, and SLOs live here.
+# No magic numbers in stage scripts — import via ai_waf_v2.utils.config.
+
+project:
+  name: "waf-ai"
+  version: "0.1.0"
+  seed: 42
+
+paths:
+  data_raw:            "data/raw"
+  data_normalized:     "data/normalized"
+  data_augmented:      "data/augmented"
+  data_filtered:       "data/filtered"
+  data_splits:         "data/splits"
+  models:              "models"
+  tokenizers:          "tokenizers"
+  reports:             "reports"
+  mlruns:              "mlruns"
+
+# ─── SLOs ────────────────────────────────────────────
+slo:
+  latency_inline_p99_ms: 5.0       # inline WAF: p99 < 5ms at batch=1
+  latency_offline_p99_ms: 50.0     # log analysis: p99 < 50ms at batch=64
+  throughput_min_rps: 10000        # requests/sec at batch=64
+  max_false_positive_rate: 0.001   # 1 FP per 1000 legitimate requests
+
+# ─── DATA ────────────────────────────────────────────
+data:
+  datasets:
+    - name: "csic_2010"
+      kaggle_handle: "kazidit/csic-2010-http-dataset"
+      converter_id: "csic_v1"  # Matches the key in CONVERTER_REGISTRY
+      description: "CSIC 2010 HTTP Dataset — University of Zaragoza"
+      url:  "https://www.kaggle.com/datasets/ispangler/csic-2010-web-application-attacks"
+      mirrors: 
+        - "https://petescully.co.uk/storage/csic_database2010.zip"
+        - "https://raw.githubusercontent.com/AvalZ/csic-2010/main/data/csic_2010.zip"
+      archive_sha256: "7e8a9b..." # Replace with actual hash
+      manual_instructions: "Visit: http://www.isi.csic.es/dataset/ and place ZIP in data/raw/downloads/csic_2010.zip"
+      license: "CC BY 4.0"
+      citation: |
+        Carmen Torrano-Gimenez, Alejandro Perez-Villegas, and Gonzalo Alvarez. 
+        "A multi-classifier approach for anomaly-based web attack detection." 
+        International Conference on Computational Intelligence in Security for Information Systems. 2010.
+      output_filename: "csic_2010.csv"
+      label_col: "label"
+    - name: "sr_bh_2020"
+      converter_id: "sr_bh_v1"  # Matches the key in CONVERTER_REGISTRY
+      description: "SecRepo Blackhat 2020 HTTP Log Dataset"
+      url:  "https://github.com/faizann24/Using-machine-learning-to-detect-malicious-URLs"
+      mirrors:
+        - "https://raw.githubusercontent.com/AvalZ/security-dataset/main/data/sr_bh_2020.csv"
+        - "https://github.com/AvalZ/security-dataset/releases/download/v1.0/sr_bh_2020.zip"
+      archive_sha256: "a1b2c3..." # Replace with actual hash
+      manual_instructions: "Download sr_bh_2020.csv from SecRepo and place in data/raw/downloads/"
+      license: "Public Domain (CC0)"
+      citation: |
+        AvalZ. "Security Dataset: sr_bh_2020." 
+        GitHub Repository, 2020. https://github.com/AvalZ/security-dataset
+      output_filename: "sr_bh_2020.csv"
+      label_col: "label"
+    - name: "ecml_pkdd_2007"
+      converter_id: "ecml_pkdd_v1"  # Matches the key in CONVERTER_REGISTRY
+      description: "ECML/PKDD 2007 Web Application Attack Dataset"
+      url:  "https://gitlab.fing.edu.uy/gsi/web-application-attacks-datasets/-/raw/master/CSIC2010HTTP/ecml_pkdd_2007.zip"      
+      mirrors:
+        - "https://gitlab.fing.edu.uy/gsi/web-application-attacks-datasets/-/raw/master/CSIC2010HTTP/ecml_pkdd_2007.zip"
+      archive_sha256: "f5e4d3..." # Replace with actual hash
+      manual_instructions: "Download from GitLab Fing and place in data/raw/downloads/ecml_pkdd_2007.zip"
+      license: "Research use only — ECML/PKDD 2007 challenge organisers"
+      citation: |
+          "Torrano-Giménez et al. (2007). Web Application Attack Dataset. "
+          "ECML/PKDD Workshop on Mining and Security."
+      output_filename: "ecml_pkdd_2007.csv"
+      label_col: "label"
+
+  schema:
+    label_map:
+      benign:    0
+      malicious: 1
+    attack_classes:
+      - sqli
+      - xss
+      - lfi
+      - rfi
+      - ssrf
+      - cmdi
+      - xxe
+      - ssti
+      - path_traversal
+      - header_injection
+
+  split:
+    train:       0.70
+    val:         0.15
+    test:        0.10
+    adversarial: 0.03
+    canary:      0.02
+    stratify_by: ["label", "attack_class"]
+
+  dedup:
+    minhash_threshold:    0.85
+    semantic_threshold:   0.90
+    exact_hash:           true
+
+# ─── AUGMENTATION ────────────────────────────────────
+augmentation:
+  min_samples_per_class: 500   # classes below this are flagged for augmentation
+  rules:
+    mutations_per_sample: 20
+    encodings:
+      - url_encode
+      - double_url_encode
+      - hex_encode
+      - unicode_escape
+      - html_entity
+      - comment_insertion
+      - case_variation
+      - whitespace_bypass
+
+  grammar:
+    targets: ["sqli", "xss", "lfi", "rfi", "ssrf", "cmdi"]
+    samples_per_class: 5000
+
+  local_llm:
+    model_path:   "${LOCAL_LLM_PATH}"
+    model_type:   "causal"          # causal | seq2seq
+    batch_size:   8
+    max_new_tokens: 256
+    temperature:  0.9
+    samples_per_gap_class: 1000
+
+  api_llm:
+    provider:     "${LLM_PROVIDER}"  # anthropic | google
+    model:        "claude-sonnet-4-20250514"
+    max_tokens:   512
+    samples_benign: 10000
+    samples_edge_case: 2000
+
+  benign:
+    rest_samples:   20000
+    replay_enabled: false            # set true if CAIDA traces available
+    replay_path:    "${CAIDA_PATH}"
+
+  filtering:
+    max_unk_ratio:          0.15
+    min_token_length:       4
+    max_token_length:       256
+    label_consistency_check: true   # cross-check with ModSecurity CRS
+
+# ─── TOKENIZER ───────────────────────────────────────
+tokenizer:
+  seq_len: 256
+
+  track_a:                          # pretrained vocab augmentation
+    base_model:  "bert-base-uncased"
+    output_dir:  "tokenizers/track_a"
+    http_tokens:                    # injected as atomic units
+      - "UNION"
+      - "SELECT"
+      - "INSERT"
+      - "DROP"
+      - "script"
+      - "onerror"
+      - "onload"
+      - "../"
+      - "%00"
+      - "SLEEP"
+      - "BENCHMARK"
+      - "exec"
+      - "eval"
+      - "document.cookie"
+
+  track_b:                          # custom BPE from scratch
+    vocab_size:       8000
+    character_coverage: 0.9999
+    model_type:       "bpe"         # bpe | unigram | char | word
+    output_dir:       "tokenizers/track_b"
+    pad_token:        "[PAD]"
+    unk_token:        "[UNK]"
+    cls_token:        "[CLS]"
+    sep_token:        "[SEP]"
+    mask_token:       "[MASK]"
+
+# ─── MODEL ───────────────────────────────────────────
+model:
+  track_a_large:
+    base_model:     "microsoft/deberta-v3-base"
+    num_labels:     2
+    dropout:        0.1
+    output_dir:     "models/track_a/large"
+
+  track_a_small:
+    base_model:     "prajjwal1/bert-tiny"
+    num_labels:     2
+    dropout:        0.1
+    output_dir:     "models/track_a/small"
+
+  track_b_99m:                      # encoder from scratch
+    d_model:        768
+    n_layers:       13
+    n_heads:        12
+    d_ff:           3072            # 4 × d_model
+    dropout:        0.1
+    attn_dropout:   0.1
+    max_seq_len:    256
+    vocab_size:     8000            # must match tokenizer.track_b.vocab_size
+    num_labels:     2
+    pad_token_id:   0
+    output_dir:     "models/track_b/99m"
+
+  student:
+    d_model:        256
+    n_layers:       6
+    n_heads:        4
+    d_ff:           1024
+    dropout:        0.1
+    attn_dropout:   0.1
+    max_seq_len:    256
+    vocab_size:     8000
+    num_labels:     2
+    pad_token_id:   0
+    output_dir:     "models/student"
+    quantization:   "int8"          # int8 | int4 | none
+
+# ─── TRAINING ────────────────────────────────────────
+training:
+  teacher:                          # Track B 99M training
+    batch_size:             256
+    grad_accum_steps:       4       # effective batch = 1024
+    max_steps:              50000
+    warmup_ratio:           0.06
+    peak_lr:                1.0e-4
+    min_lr_ratio:           0.1     # min_lr = peak_lr × ratio
+    weight_decay:           0.01
+    adam_beta1:             0.9
+    adam_beta2:             0.999
+    adam_eps:               1.0e-8
+    grad_clip_norm:         1.0
+    label_smoothing:        0.1
+    precision:              "bf16"
+    eval_every_steps:       500
+    save_every_steps:       1000
+    early_stopping_patience: 10    # in eval intervals
+    early_stopping_metric:  "auc_pr"
+    operating_fpr_target:   0.001
+
+  distillation:
+    batch_size:             128
+    grad_accum_steps:       8
+    max_steps:              40000
+    warmup_ratio:           0.06
+    peak_lr:                2.0e-4
+    weight_decay:           0.01
+    grad_clip_norm:         1.0
+    precision:              "bf16"
+    alpha_soft:             0.7     # weight on KL(student || teacher)
+    alpha_hard:             0.3     # weight on CrossEntropy(y_hat, y)
+    temperature:            4.0
+    hidden_mse_weight:      0.0     # disabled: tokenizers differ between models
+
+# ─── EVALUATION ──────────────────────────────────────
+evaluation:
+  batch_sizes:      [1, 8, 32, 64, 256]
+  devices:          ["gpu", "cpu"]
+  n_latency_warmup: 50
+  n_latency_runs:   500
+  metrics:
+    - f1
+    - precision
+    - recall
+    - fpr
+    - fnr
+    - auc_roc
+    - auc_pr
+
+  adversarial:
+    tamper_scripts:
+      - space2comment
+      - between_comments
+      - charunicodeescape
+      - randomcase
+      - base64encode
+      - percentage
+    evasion_wordlists:
+      - "data/raw/evasion/waf_bypass.txt"
+
+  ablation:
+    tokenizer:        true
+    augmentation:     true
+    model_size:       true
+    label_smoothing:  true
+
+# ─── MLFLOW ──────────────────────────────────────────
+mlflow:
+  tracking_uri: "./mlruns"
+  experiment_name: "waf-ai"
+  tags:
+    project: "waf-ai"
+    framework: "pytorch"
