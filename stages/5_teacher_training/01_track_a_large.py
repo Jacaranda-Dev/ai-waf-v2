@@ -1,102 +1,213 @@
-"""Stage 4.1 — Fine-tune DeBERTa-v3-base (Track A large) on WAF data."""
+"""
+stages/5_training/01_track_a_large.py
+--------------------------------------
+Stage 5.1 — Fine-tune DeBERTa-v3-base (Track A large) on the WAF dataset.
+
+Refactored from the original to:
+  * Remove the runtime-injection pattern that script 02 previously relied on
+    — each script now owns its complete training logic independently.
+  * Integrate CheckpointTracker for atomic saves + best_model symlink, so
+    Stage 6 can always reference models/track_a/large/latest.
+  * Use explicit MLflow run name tied to this experiment for unambiguous
+    run tracking.
+
+Run:
+    python stages/5_training/01_track_a_large.py --config config/pipeline.yaml
+"""
+
 from __future__ import annotations
-import argparse, time
+
+import argparse
+import json
 from pathlib import Path
-import torch
-from torch.utils.data import DataLoader
+
 import mlflow
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, get_cosine_schedule_with_warmup
-from torch.optim import AdamW
-import torch.nn as nn
-from ai_waf_v2.data.dataset import get_split_path
-from ai_waf_v2.eval.metrics import compute_metrics, find_threshold_at_fpr
+import pyarrow.parquet as pq
+import torch
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoModel, AutoTokenizer
+
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
-from ai_waf_v2.utils.mlflow_utils import init_experiment
 from ai_waf_v2.utils.seed import seed_everything
-log = get_logger(__name__, log_file="reports/train_track_a_large.log")
 
-class _HFDataset(torch.utils.data.Dataset):
-    def __init__(self, parquet_path, tokenizer, seq_len=256):
+from checkpoint_utils import CheckpointTracker
+from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, run_epoch
+
+log = get_logger(__name__)
+
+EXPERIMENT_TYPE = "track_a_large"
+
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+
+class WafDataset(Dataset):
+    """Thin wrapper around a Parquet split for track-agnostic use."""
+
+    def __init__(self, path: Path, tokenizer: Any, seq_len: int) -> None:
         import pyarrow.parquet as pq
-        t = pq.read_table(parquet_path, columns=["raw","label","attack_class"])
-        self._texts   = t["raw"].to_pylist()
-        self._labels  = t["label"].to_pylist()
-        self._classes = t["attack_class"].to_pylist()
-        self.tokenizer = tokenizer; self.seq_len = seq_len
-    def __len__(self): return len(self._texts)
-    def __getitem__(self, i):
-        enc = self.tokenizer(self._texts[i], truncation=True, max_length=self.seq_len,
-                             padding="max_length", return_tensors="pt")
-        return {"input_ids": enc["input_ids"].squeeze(0),
-                "attention_mask": enc["attention_mask"].squeeze(0),
-                "labels": torch.tensor(self._labels[i], dtype=torch.long),
-                "attack_class": self._classes[i]}
+        table       = pq.read_table(path, columns=["raw", "label"])
+        self.texts  = table["raw"].to_pylist()
+        self.labels = table["label"].to_pylist()
+        self.tok    = tokenizer
+        self.seq_len = seq_len
 
-def run(args):
-    configure_root(); cfg = load_config(args.config); seed_everything(cfg.project.seed)
-    tcfg = cfg.training.teacher; mcfg = cfg.model.track_a_large
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def __len__(self) -> int:
+        return len(self.texts)
+
+    def __getitem__(self, idx: int) -> dict:
+        ids = self.tok.encode(
+            self.texts[idx],
+            truncation=True,
+            max_length=self.seq_len,
+            add_special_tokens=True,
+        )
+        return {"input_ids": ids, "label": self.labels[idx]}
+
+
+# ---------------------------------------------------------------------------
+# Model wrapper
+# ---------------------------------------------------------------------------
+
+class TrackALargeModel(torch.nn.Module):
+    """DeBERTa-v3-base backbone + WafClassifier head."""
+
+    def __init__(self, base_model: str, num_labels: int, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.backbone   = AutoModel.from_pretrained(base_model)
+        hidden          = self.backbone.config.hidden_size
+        self.classifier = WafClassifier(hidden, num_labels, dropout)
+
+    def forward(
+        self,
+        input_ids:      torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        out    = self.backbone(input_ids=input_ids, attention_mask=attention_mask)
+        # DeBERTa returns last_hidden_state; [CLS] pooling handled in WafClassifier
+        return self.classifier(out.last_hidden_state)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def run(args: argparse.Namespace) -> None:
+    configure_root()
+    cfg = load_config(args.config)
+    seed_everything(cfg.project.seed)
+
+    device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    mcfg    = cfg.model.track_a_large
+    tcfg    = cfg.training
+
+    log.info(f"Training {EXPERIMENT_TYPE} | device={device} | base={mcfg.base_model}")
+
+    # ------------------------------------------------------------------
+    # Tokenizer + data
+    # ------------------------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(mcfg.base_model)
-    model     = AutoModelForSequenceClassification.from_pretrained(
-        mcfg.base_model, num_labels=mcfg.num_labels, ignore_mismatched_sizes=True)
-    model.to(device)
-    if torch.__version__ >= "2.0" and device.type == "cuda":
-        model = torch.compile(model)
-    splits_dir = cfg.paths.data_splits
-    train_ds = _HFDataset(get_split_path(splits_dir,"train"), tokenizer, cfg.tokenizer.seq_len)
-    val_ds   = _HFDataset(get_split_path(splits_dir,"val"),   tokenizer, cfg.tokenizer.seq_len)
-    def collate(batch):
-        return {"input_ids":      torch.stack([b["input_ids"]      for b in batch]),
-                "attention_mask": torch.stack([b["attention_mask"] for b in batch]),
-                "labels":         torch.stack([b["labels"]         for b in batch]),
-                "attack_class":   [b["attack_class"]               for b in batch]}
-    train_loader = DataLoader(train_ds, tcfg.batch_size, shuffle=True,  collate_fn=collate, num_workers=4, pin_memory=True)
-    val_loader   = DataLoader(val_ds,   tcfg.batch_size*2, shuffle=False, collate_fn=collate, num_workers=2, pin_memory=True)
-    no_decay = {"bias","LayerNorm.weight"}
-    params = [{"params":[p for n,p in model.named_parameters() if not any(nd in n for nd in no_decay)],"weight_decay":tcfg.weight_decay},
-              {"params":[p for n,p in model.named_parameters() if     any(nd in n for nd in no_decay)],"weight_decay":0.0}]
-    optimizer = AdamW(params, lr=tcfg.peak_lr, betas=(tcfg.adam_beta1,tcfg.adam_beta2))
-    scheduler = get_cosine_schedule_with_warmup(optimizer, tcfg.warmup_steps, tcfg.max_steps)
-    use_bf16  = tcfg.precision == "bf16" and device.type == "cuda" and torch.cuda.is_bf16_supported()
-    autocast  = torch.amp.autocast("cuda", dtype=torch.bfloat16) if use_bf16 else torch.amp.autocast("cuda", enabled=False)
-    out_dir = Path(mcfg.output_dir); out_dir.mkdir(parents=True, exist_ok=True)
-    init_experiment(cfg); best_auc = 0.0; step = 0; global_step = 0
-    model.train(); optimizer.zero_grad(); it = iter(train_loader)
-    with mlflow.start_run(run_name=f"track_a_large_{int(time.time())}", tags=cfg.mlflow.tags):
-        mlflow.log_params({"model": mcfg.base_model, "n_params": sum(p.numel() for p in model.parameters() if p.requires_grad)})
-        while step < tcfg.max_steps:
-            try: batch = next(it)
-            except StopIteration: it = iter(train_loader); batch = next(it)
-            ids = batch["input_ids"].to(device); mask = batch["attention_mask"].to(device); labels = batch["labels"].to(device)
-            with autocast:
-                out  = model(input_ids=ids, attention_mask=mask, labels=labels)
-                loss = out.loss / tcfg.grad_accum_steps
-            loss.backward()
-            if (step+1) % tcfg.grad_accum_steps == 0:
-                nn.utils.clip_grad_norm_(model.parameters(), tcfg.grad_clip_norm)
-                optimizer.step(); scheduler.step(); optimizer.zero_grad(); global_step += 1
-                if global_step % tcfg.eval_every_steps == 0:
-                    model.eval(); all_p,all_pr,all_l = [],[],[]
-                    with torch.no_grad():
-                        for vb in val_loader:
-                            vids = vb["input_ids"].to(device); vmask = vb["attention_mask"].to(device)
-                            with autocast: logits = model(input_ids=vids, attention_mask=vmask).logits
-                            probs = torch.softmax(logits,-1)[:,1]
-                            preds = (probs >= 0.5).long()
-                            all_p.append(preds.cpu()); all_pr.append(probs.cpu()); all_l.append(vb["labels"])
-                    m = compute_metrics(torch.cat(all_p), torch.cat(all_pr), torch.cat(all_l))
-                    mlflow.log_metrics({f"val/{k}": v for k,v in m.items() if isinstance(v,float)}, step=global_step)
-                    log.info(f"step={global_step} F1={m[\'f1\']:.4f} AUC-PR={m[\'auc_pr\']:.4f}")
-                    if m["auc_pr"] > best_auc:
-                        best_auc = m["auc_pr"]
-                        model.save_pretrained(str(out_dir/"best_model"))
-                        tokenizer.save_pretrained(str(out_dir/"best_model"))
-                        log.info(f"  ✓ best checkpoint (auc_pr={best_auc:.4f})")
-                    model.train()
-            step += 1
-    model.save_pretrained(str(out_dir/"final_model"))
-    log.info(f"Track A large training complete. Best AUC-PR: {best_auc:.4f}")
-def parse_args():
-    p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
-if __name__ == "__main__": run(parse_args())
+    splits    = Path(cfg.paths.data_splits)
+
+    train_ds = WafDataset(splits / "train.parquet", tokenizer, cfg.tokenizer.seq_len)
+    val_ds   = WafDataset(splits / "val.parquet",   tokenizer, cfg.tokenizer.seq_len)
+
+    collator   = WafCollator(tokenizer, seq_len=cfg.tokenizer.seq_len)
+    train_loader = DataLoader(train_ds, batch_size=tcfg.batch_size, shuffle=True,
+                              collate_fn=collator, num_workers=4, pin_memory=True)
+    val_loader   = DataLoader(val_ds,   batch_size=tcfg.batch_size * 2, shuffle=False,
+                              collate_fn=collator, num_workers=4, pin_memory=True)
+
+    # ------------------------------------------------------------------
+    # Model
+    # ------------------------------------------------------------------
+    model = TrackALargeModel(
+        base_model=mcfg.base_model,
+        num_labels=mcfg.num_labels,
+        dropout=mcfg.get("dropout", 0.1),
+    ).to(device)
+
+    total_steps = len(train_loader) * tcfg.epochs // tcfg.get("accum_steps", 1)
+    warmup      = int(total_steps * tcfg.get("warmup_ratio", 0.06))
+
+    optimizer, scheduler = build_optimizer(
+        model,
+        lr=tcfg.lr,
+        weight_decay=tcfg.get("weight_decay", 0.01),
+        warmup_steps=warmup,
+        total_steps=total_steps,
+        backbone_lr_multiplier=tcfg.get("backbone_lr_multiplier", 0.1),
+    )
+
+    scaler  = torch.cuda.amp.GradScaler() if device.type == "cuda" else None
+    tracker = CheckpointTracker(
+        experiment_type=EXPERIMENT_TYPE,
+        models_root=Path(cfg.paths.models),
+        metric="macro_f1",
+        mode="max",
+        patience=tcfg.get("patience", 3),
+    )
+
+    # ------------------------------------------------------------------
+    # MLflow
+    # ------------------------------------------------------------------
+    mlflow.set_experiment(cfg.project.name)
+    with mlflow.start_run(run_name=EXPERIMENT_TYPE):
+        mlflow.log_params({
+            "base_model":   mcfg.base_model,
+            "num_labels":   mcfg.num_labels,
+            "epochs":       tcfg.epochs,
+            "batch_size":   tcfg.batch_size,
+            "lr":           tcfg.lr,
+            "seq_len":      cfg.tokenizer.seq_len,
+            "experiment":   EXPERIMENT_TYPE,
+        })
+
+        for epoch in range(1, tcfg.epochs + 1):
+            train_metrics = run_epoch(
+                model, train_loader, optimizer, scheduler, device,
+                accum_steps=tcfg.get("accum_steps", 1),
+                scaler=scaler,
+            )
+            val_metrics = evaluate(model, val_loader, device, num_labels=mcfg.num_labels)
+
+            log.info(
+                f"Epoch {epoch}/{tcfg.epochs} | "
+                f"train_loss={train_metrics['loss']:.4f} | "
+                f"val_loss={val_metrics['loss']:.4f} | "
+                f"macro_f1={val_metrics['macro_f1']:.4f}"
+            )
+
+            mlflow.log_metrics(
+                {f"train_{k}": v for k, v in train_metrics.items()} |
+                {f"val_{k}":   v for k, v in val_metrics.items()},
+                step=epoch,
+            )
+
+            tracker.step(
+                model, val_metrics,
+                meta={"epoch": epoch, "train_loss": train_metrics["loss"]},
+                step=epoch,
+            )
+
+            if tracker.should_stop:
+                log.info(f"Early stopping triggered at epoch {epoch}.")
+                break
+
+        log.info(
+            f"Training complete. Best macro_f1={tracker.best_value:.5f} "
+            f"→ {tracker.best_ckpt}"
+        )
+        mlflow.log_artifact(str(tracker.best_ckpt / "checkpoint_meta.json"))
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=f"Fine-tune {EXPERIMENT_TYPE}.")
+    p.add_argument("--config", default="config/pipeline.yaml")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    run(parse_args())

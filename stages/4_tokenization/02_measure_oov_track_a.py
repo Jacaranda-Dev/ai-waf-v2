@@ -1,38 +1,116 @@
-"""Stage 3.2 — Measure OOV rate and fertility for Track A tokenizer."""
+"""
+stages/4_tokenization/02_measure_oov_track_a.py
+------------------------------------------------
+Stage 3.2 — Evaluate OOV rate, fertility, and truncation for Track A.
+
+Enhancements over original:
+  * Stratified sampling instead of sequential [:5000] slicing — prevents
+    minority attack classes (Path Traversal, SSRF) from being excluded
+    when Parquet files are ordered by timestamp or category.
+  * Truncation rate metric — reports the fraction of requests whose token
+    count exceeds seq_len (where the model silently drops tail content).
+  * Subword-char ratio — compression efficiency signal.
+  * All metrics computed via the shared `tokenizer_eval` module to avoid
+    logic drift with scripts 04 and 05.
+"""
 from __future__ import annotations
-import argparse, json
+
+import argparse
+import json
 from pathlib import Path
+
 import pyarrow.parquet as pq
-from ai_waf_v2.tokenizer.vocab_utils import measure_oov
+from transformers import AutoTokenizer
+
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+
+from tokenizer_eval import compute_full_metrics, stratified_sample
+
 log = get_logger(__name__)
-def run(args):
-    configure_root(); cfg = load_config(args.config)
+
+EVAL_SAMPLE_SIZE = 5_000
+
+
+def run(args: argparse.Namespace) -> None:
+    configure_root()
+    cfg = load_config(args.config)
+
+    # ------------------------------------------------------------------
+    # Load Track A tokenizer
+    # ------------------------------------------------------------------
     track_a_dir = Path(cfg.tokenizer.track_a.output_dir)
-    if not (track_a_dir/"tokenizer_config.json").exists():
-        log.error("Track A tokenizer not found. Run 01_augment_pretrained_vocab.py first."); return
-    from transformers import AutoTokenizer
+    if not (track_a_dir / "tokenizer_config.json").exists():
+        log.error(
+            "Track A tokenizer not found at '%s'. "
+            "Run 01_augment_pretrained_vocab.py first.",
+            track_a_dir,
+        )
+        return
+
     tokenizer = AutoTokenizer.from_pretrained(str(track_a_dir))
-    val_path  = Path(cfg.paths.data_splits)/"val.parquet"
-    if not val_path.exists(): log.error("No val split"); return
-    df = pq.read_table(val_path, columns=["raw","attack_class"]).to_pandas()
-    texts  = df["raw"].tolist()[:5000]
-    labels = df["attack_class"].tolist()[:5000]
-    stats  = measure_oov(tokenizer, texts)
-    log.info(f"Track A OOV: {stats}")
-    # Per-class
-    from collections import defaultdict
-    class_texts = defaultdict(list)
-    for t, l in zip(texts, labels): class_texts[l].append(t)
-    per_class = {}
-    for cls, ts in class_texts.items():
-        per_class[cls] = round(measure_oov(tokenizer, ts)["oov_rate"], 6)
-    result = {**stats, "per_class_oov": per_class}
-    out = Path(cfg.paths.reports)/"metrics"/"tokenizer_oov_track_a.json"
+    log.info(f"Loaded Track A tokenizer (vocab_size={len(tokenizer)})")
+
+    # ------------------------------------------------------------------
+    # Load validation data — full table, then stratified-sample
+    # ------------------------------------------------------------------
+    val_path = Path(cfg.paths.data_splits) / "val.parquet"
+    if not val_path.exists():
+        log.error("Validation split not found at '%s'.", val_path)
+        return
+
+    table  = pq.read_table(val_path, columns=["raw", "attack_class"])
+    texts  = table["raw"].to_pylist()
+    labels = table["attack_class"].to_pylist()
+
+    texts, labels = stratified_sample(
+        texts, labels,
+        n=min(EVAL_SAMPLE_SIZE, len(texts)),
+        seed=cfg.project.seed,
+    )
+    log.info(
+        f"Stratified sample: {len(texts)} requests across "
+        f"{len(set(labels))} attack classes"
+    )
+
+    # ------------------------------------------------------------------
+    # Compute unified metrics
+    # ------------------------------------------------------------------
+    seq_len = cfg.tokenizer.seq_len
+    result  = compute_full_metrics(
+        tokenizer, texts, labels,
+        seq_len=seq_len,
+        unk_token="[UNK]",
+        track_name="track_a",
+    )
+
+    log.info(
+        f"Track A | oov={result['oov_rate']:.4f}  "
+        f"fertility={result['fertility']:.4f}  "
+        f"truncation={result['truncation_rate']:.4f}  "
+        f"subword_char_ratio={result['subword_char_ratio']:.2f}"
+    )
+    for cls, m in result["per_class"].items():
+        log.info(
+            f"  {cls:<22s} oov={m['oov_rate']:.4f}  "
+            f"fertility={m['fertility']:.4f}  "
+            f"trunc={m['truncation_rate']:.4f}  n={m['n_samples']}"
+        )
+
+    # ------------------------------------------------------------------
+    # Persist
+    # ------------------------------------------------------------------
+    out = Path(cfg.paths.reports) / "metrics" / "tokenizer_oov_track_a.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2))
-    log.info(f"Track A OOV results saved to {out}")
-def parse_args():
-    p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
-if __name__ == "__main__": run(parse_args())
+    log.info(f"Track A evaluation report saved to {out}")
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Evaluate Track A tokenizer metrics.")
+    p.add_argument("--config", default="config/pipeline.yaml")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    run(parse_args())
