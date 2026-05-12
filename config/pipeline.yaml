@@ -3,7 +3,7 @@
 # No magic numbers in stage scripts — import via ai_waf_v2.utils.config.
 
 project:
-  name: "waf-ai"
+  name: "ai-waf-v2"
   version: "0.1.0"
   seed: 42
 
@@ -29,50 +29,74 @@ slo:
 data:
   datasets:
     - name: "csic_2010"
-      kaggle_handle: "kazidit/csic-2010-http-dataset"
-      converter_id: "csic_v1"  # Matches the key in CONVERTER_REGISTRY
-      description: "CSIC 2010 HTTP Dataset — University of Zaragoza"
+      kaggle_handle: "ispangler/csic-2010-web-application-attacks"
+      converter_id: "csic_v1"  
+      description: "CSIC 2010 Web Application Attacks"
       url:  "https://www.kaggle.com/datasets/ispangler/csic-2010-web-application-attacks"
       mirrors: 
-        - "https://petescully.co.uk/storage/csic_database2010.zip"
-        - "https://raw.githubusercontent.com/AvalZ/csic-2010/main/data/csic_2010.zip"
-      archive_sha256: "7e8a9b..." # Replace with actual hash
-      manual_instructions: "Visit: http://www.isi.csic.es/dataset/ and place ZIP in data/raw/downloads/csic_2010.zip"
-      license: "CC BY 4.0"
+        - "https://gitlab.fing.edu.uy/gsi/web-application-attacks-datasets/-/blob/master/csic_2010/dataset_cisc_train_test.tar.gz"
+      archive_sha256: ""
+      manual_instructions: "Visit: https://www.kaggle.com/datasets/ispangler/csic-2010-web-application-attacks and place csv in data/raw/downloads/csic_database.csv"
+      license: ""
       citation: |
-        Carmen Torrano-Gimenez, Alejandro Perez-Villegas, and Gonzalo Alvarez. 
-        "A multi-classifier approach for anomaly-based web attack detection." 
-        International Conference on Computational Intelligence in Security for Information Systems. 2010.
+        "?""
       output_filename: "csic_2010.csv"
-      label_col: "label"
+      label_col: "classification"
     - name: "sr_bh_2020"
-      converter_id: "sr_bh_v1"  # Matches the key in CONVERTER_REGISTRY
-      description: "SecRepo Blackhat 2020 HTTP Log Dataset"
-      url:  "https://github.com/faizann24/Using-machine-learning-to-detect-malicious-URLs"
+      kaggle_handle: "realhugnne/srbh2020-v2"
+      converter_id: "sr_bh_v1"  
+      description: "SR-BH 2020 multi-label dataset"
+      url:  "https://investigacion.unir.net/documentos/668fc479b9e7c03b01bde810"
       mirrors:
-        - "https://raw.githubusercontent.com/AvalZ/security-dataset/main/data/sr_bh_2020.csv"
-        - "https://github.com/AvalZ/security-dataset/releases/download/v1.0/sr_bh_2020.zip"
-      archive_sha256: "a1b2c3..." # Replace with actual hash
-      manual_instructions: "Download sr_bh_2020.csv from SecRepo and place in data/raw/downloads/"
-      license: "Public Domain (CC0)"
+        - "https://www.kaggle.com/api/v1/datasets/download/ispangler/csic-2010-web-application-attacks/csic-2010-web-application-attacks.zip"
+      archive_sha256: "" 
+      manual_instructions: "Download sr_bh_2020.csv from https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/OGOIXX# and place in data/raw/downloads/"
+      license: " CC0 1.0"
       citation: |
-        AvalZ. "Security Dataset: sr_bh_2020." 
-        GitHub Repository, 2020. https://github.com/AvalZ/security-dataset
+        "Sureda Riera, Tomás, Juan Ramón Bermejo Higuera, Javier Bermejo Higuera, Juan Antonio Sicilia Montalvo, y José Javier Martínez Herráiz. «SR-BH 2020 multi-label dataset», 2022. https://doi.org/10.7910/DVN/OGOIXX.""
       output_filename: "sr_bh_2020.csv"
       label_col: "label"
     - name: "ecml_pkdd_2007"
-      converter_id: "ecml_pkdd_v1"  # Matches the key in CONVERTER_REGISTRY
+      converter_id: "ecml_pkdd_v1"  
       description: "ECML/PKDD 2007 Web Application Attack Dataset"
-      url:  "https://gitlab.fing.edu.uy/gsi/web-application-attacks-datasets/-/raw/master/CSIC2010HTTP/ecml_pkdd_2007.zip"      
+      url:  "https://github.com/msudol/Web-Application-Attack-Datasets"      
       mirrors:
-        - "https://gitlab.fing.edu.uy/gsi/web-application-attacks-datasets/-/raw/master/CSIC2010HTTP/ecml_pkdd_2007.zip"
-      archive_sha256: "f5e4d3..." # Replace with actual hash
-      manual_instructions: "Download from GitLab Fing and place in data/raw/downloads/ecml_pkdd_2007.zip"
+        - "https://github.com/msudol/Web-Application-Attack-Datasets/blob/master/CSVData/ecml_final.csv"
+      archive_sha256: "" 
+      manual_instructions: "Download from GitHub and place in data/raw/downloads/ecml_pkdd_2007.zip"
       license: "Research use only — ECML/PKDD 2007 challenge organisers"
       citation: |
           "Torrano-Giménez et al. (2007). Web Application Attack Dataset. "
           "ECML/PKDD Workshop on Mining and Security."
       output_filename: "ecml_pkdd_2007.csv"
+      label_col: "label"
+    - name: "HTTPParams"
+      kaggle_handle: "evg3n1j/httpparamsdataset"
+      converter_id: "http_params_v1"  
+      description: "Benign and malicious payloads in HTTP request parameters"
+      url:  "https://www.kaggle.com/datasets/evg3n1j/httpparamsdataset"      
+      mirrors:
+        - "https://github.com/Morzeux/HttpParamsDataset/blob/master/payload_full.csv"
+      archive_sha256: "" 
+      manual_instructions: "Download from GitHub and place in data/raw/downloads/httpparams_raw.csv"
+      license: ""
+      citation: |
+          "?"
+      output_filename: "httpparams_raw.csv"
+      label_col: "label"
+    - name: "CIC IIoT 2025"
+      kaggle_handle: "baderbotaiban/cic-iiot-2025-datasense-csv-mirror"
+      converter_id: "cic_iiot_v1"  
+      description: "State-of-the-art IIoT dataset from Canadian Institute for Cybersecurity with synchronized sensor and network data from 40 devices including 15+ industrial sensors. Features multi-objective feature selection for anomaly detection in industrial environments."
+      url:  "https://www.unb.ca/cic/datasets/iiot-dataset-2025.html"      
+      mirrors:
+        - "https://www.kaggle.com/api/v1/datasets/download/muhammadirfangull/cic-iiot-2025/cic-iiot-2025.zip"
+      archive_sha256: "" 
+      manual_instructions: "Download from kaggle and place in data/raw/downloads/iiot_raw.csv"
+      license: "Attribution 4.0 International CC BY 4.0 "
+      citation: |
+          "Firouzi, A.; Dadkhah, S.; Maret, S.A.; Ghorbani, A.A. "DataSense: A Real-Time Sensor-Based Benchmark Dataset for Attack Analysis in IIoT with Multi-Objective Feature Selection." Electronics, 14, 4095, 2025."
+      output_filename: "iiot_raw.csv"
       label_col: "label"
 
   schema:

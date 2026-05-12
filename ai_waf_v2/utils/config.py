@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 
 
 # ─────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 # ─────────────────────────────────────────────────────────
 
 class ProjectConfig(BaseModel):
-    name:    str = "waf-ai"
+    name:    str = "ai-waf-v2"
     version: str = "0.1.0"
     seed:    int = 42
 
@@ -49,9 +49,29 @@ class SloConfig(BaseModel):
 
 
 class DatasetEntry(BaseModel):
-    name:      str
-    url:       str = ""
-    label_col: str = "label"
+    # Forbid unknown fields — if YAML has a key not declared here,
+    # Pydantic raises ValidationError immediately instead of silently dropping it.
+    model_config = ConfigDict(extra="forbid")
+
+    # ── Required ──────────────────────────────────────────
+    name:         str
+
+    # ── Acquisition ───────────────────────────────────────
+    converter_id:         Optional[str]       = None
+    kaggle_handle:        Optional[str]       = None
+    url:                  str                 = ""
+    mirrors:              list[str]           = Field(default_factory=list)
+    archive_sha256:       Optional[str]       = None
+    manual_instructions:  Optional[str]       = None
+
+    # ── Metadata ──────────────────────────────────────────
+    description:  Optional[str] = None
+    license:      Optional[str] = None
+    citation:     Optional[str] = None
+
+    # ── Output ────────────────────────────────────────────
+    output_filename: Optional[str] = None
+    label_col:       str           = "label"
 
 
 class SplitConfig(BaseModel):

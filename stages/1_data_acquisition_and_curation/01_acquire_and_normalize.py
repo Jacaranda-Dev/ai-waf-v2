@@ -4,9 +4,6 @@ stages/1_data_acquisition_and_curation/01_acquire_and_normalize.py
 Stage 1 — Download, verify, convert, adapt, normalise, and write
 canonical Parquet in a single streaming pass.
 
-Previous design:
-  01_data_acquisition_and_ingestion.py  → data/normalized/{name}.parquet  (un-normalised)
-  02_normalize_schema.py                → data/normalized/normalized.parquet
 
 This file replaces both.  Normalization is applied inline inside
 `_normalized_record_iter`, so the first Parquet written to disk is
@@ -28,7 +25,7 @@ Steps 5–7 are skipped when the output Parquet already exists, unless
 --force or --force-ingest is supplied.
 
 Run:
-    python stages/1_data_acquisition_and_curation/01_acquire_and_normalize.py \\
+    python stages/1_data_acquisition_and_curation/01_acquire_and_normalize.py \
         --config config/pipeline.yaml
 
     # skip SHA-256 verification:
@@ -138,7 +135,7 @@ def _normalise_record(record: HttpRecord) -> HttpRecord | None:
     """
     Apply schema-normalization rules to a single HttpRecord in-place.
 
-    Rules (previously scattered across 02_normalize_schema.py):
+    Rules:
       • Replace empty / whitespace strings with sensible defaults.
       • Canonicalise attack_class via CLASS_ALIASES.
       • Force label=0 for benign records.
@@ -188,8 +185,7 @@ def _normalized_record_iter(
     This is the key integration point: adapters (ADAPTER_REGISTRY) are
     unchanged — they still yield HttpRecords as before — but every record
     passes through _normalise_record before it reaches the Parquet writer.
-    The old Stage 1.2 read-modify-write loop is replaced by this thin
-    generator.
+    
     """
     for record in raw_iter:
         normalised = _normalise_record(record)
@@ -915,9 +911,13 @@ def run(args: argparse.Namespace) -> None:
 
     specs: list[DatasetSpec] = []
     for ds_cfg in configured:
+        print(f"%%%%%%%%%%%%%% dataset {ds_cfg.name=}")
         conv_id   = getattr(ds_cfg, "converter_id", None)
+        print(f"\t{conv_id=}")
         converter = CONVERTER_REGISTRY.get(conv_id)
+        print(f"\t{converter=}")
         adapter   = ADAPTER_REGISTRY.get(conv_id)
+        print(f"\t{adapter=}")
 
         if not converter or not adapter:
             log.warning(
