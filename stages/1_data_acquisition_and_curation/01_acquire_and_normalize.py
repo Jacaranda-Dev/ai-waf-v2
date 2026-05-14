@@ -766,7 +766,7 @@ def acquire_csv(spec: DatasetSpec, raw_dir: Path, verify: bool, force: bool) -> 
             )
             return _manifest_entry(spec, out_csv, "skipped", out_csv.stat().st_size)
 
-    log.info(f"\n{'─'*60}")
+    log.info(f"\n{' '*8}{'─'*60}")
     log.info(f"[{spec.name}] {spec.description}")
 
     extraction_dir: Path | None = None
@@ -911,13 +911,10 @@ def run(args: argparse.Namespace) -> None:
 
     specs: list[DatasetSpec] = []
     for ds_cfg in configured:
-        print(f"%%%%%%%%%%%%%% dataset {ds_cfg.name=}")
         conv_id   = getattr(ds_cfg, "converter_id", None)
-        print(f"\t{conv_id=}")
         converter = CONVERTER_REGISTRY.get(conv_id)
-        print(f"\t{converter=}")
         adapter   = ADAPTER_REGISTRY.get(conv_id)
-        print(f"\t{adapter=}")
+        log.info(f"Found configured dataset: {ds_cfg.name}, id: {conv_id}, converter: {converter}, adapter: {adapter}")
 
         if not converter or not adapter:
             log.warning(
@@ -956,6 +953,8 @@ def run(args: argparse.Namespace) -> None:
     failed_acquire:    list[str]       = []
 
     for spec in specs:
+        log.info(f" =========== Dataset {spec.name}:")
+        log.info(f"{' '*8}==== Phase 1 — Acquire (download → CSV)")
         # Phase 1 — Acquire (download → CSV)
         try:
             acq_entry = acquire_csv(
@@ -972,6 +971,7 @@ def run(args: argparse.Namespace) -> None:
             continue
 
         # Phase 2 — Adapt + Normalise + Write (single streaming pass)
+        log.info(f"{' '*8}==== Phase 2 — Adapt + Normalise + Write ")
         csv_path    = raw_dir / spec.output_csv
         parquet_out = normalized_dir / f"{spec.name}.parquet"
 
