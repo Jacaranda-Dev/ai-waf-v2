@@ -134,7 +134,7 @@ def run(args: argparse.Namespace) -> None:
     combined_class_counts.update(aug_class_counts)
 
     # ── Required classes from config ───────────────────────────────────────
-    required  = set(cfg.data.schema.attack_classes)
+    required  = set(cfg.data.data_schema.attack_classes)  
     present   = {cls for cls, cnt in combined_class_counts.items() if cnt > 0}
     missing   = required - present
     low_count = {

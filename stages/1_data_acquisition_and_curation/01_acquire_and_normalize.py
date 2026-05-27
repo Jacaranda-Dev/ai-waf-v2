@@ -13,7 +13,7 @@ Pipeline per dataset
 ────────────────────
   1. Locate source  — kagglehub cache / local copy / mirror URL
   2. Verify         — SHA-256 checksum on archive (if configured)
-  3. Extract        — ZIP / tar.gz / flat file → extract_dir
+  3. Extract        — ZIP / tar.gz / flat file → extract_dir (if necessary)
   4. Convert        — extract_dir → data/raw/{name}.csv   (CONVERTER_REGISTRY)
   5. Adapt          — CSV rows → Iterator[HttpRecord]      (ADAPTER_REGISTRY)
   6. Normalise      — fix nulls, canonicalise attack_class, enforce binary label
@@ -66,6 +66,7 @@ from typing import Callable, Iterator
 import kagglehub
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc   
 import pyarrow.parquet as pq
 from urllib.error import URLError
 
@@ -317,15 +318,29 @@ def _iter_http_blocks(text: str) -> Iterator[str]:
             yield block
 
 
-def convert_csic_2010(extract_dir: Path, out_path: Path) -> int:
+def _convert_csic_v1(extract_dir: Path, out_path: Path) -> int:
     """
-    CSIC 2010 ZIP contains:
-      normalTraffic.txt    — benign requests (raw HTTP blocks)
-      anomalousTraffic.txt — malicious requests
+    CSIC 2010: Kaggle delivers this dataset as CSV(s) — concatenate and save as-is.
+    Falls back to parsing normalTraffic.txt / anomalousTraffic.txt for the original ZIP.
+    """
+    # ── Kaggle delivery: pre-built CSV(s) ─────────────────────────────────────
+    csv_files = list(extract_dir.rglob("*.csv"))
+    if csv_files:
+        dfs = []
+        for p in sorted(csv_files):
+            try:
+                dfs.append(pd.read_csv(p, low_memory=False))
+            except Exception as e:
+                log.warning(f"  Could not read {p.name}: {e}")
+        if not dfs:
+            raise RuntimeError("All CSIC 2010 CSV files failed to load.")
+        df = pd.concat(dfs, ignore_index=True)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(out_path, index=False)
+        #log.info(f"  CSIC 2010 converter (CSV): {len(df):,} rows")
+        return len(df)
 
-    Writes a CSV with columns:
-      raw, label, attack_class, method, path, query_string, headers, body
-    """
+    # ── Original ZIP format: normalTraffic.txt + anomalousTraffic.txt ─────────
     FIELDNAMES = ["raw", "label", "attack_class", "method", "path",
                   "query_string", "headers", "body"]
 
@@ -334,7 +349,7 @@ def convert_csic_2010(extract_dir: Path, out_path: Path) -> int:
 
     if not normal_files:
         raise FileNotFoundError(
-            f"normalTraffic.txt not found under {extract_dir}. "
+            f"Neither CSV files nor normalTraffic.txt found under {extract_dir}. "
             "Archive structure may have changed."
         )
     if not anomalous_files:
@@ -366,7 +381,7 @@ def convert_csic_2010(extract_dir: Path, out_path: Path) -> int:
                 })
                 n_rows += 1
 
-    log.info(f"  CSIC 2010 converter: {n_rows:,} rows")
+    log.info(f"  CSIC 2010 converter (TXT): {n_rows:,} rows")
     return n_rows
 
 
@@ -397,17 +412,14 @@ def _parse_arff(path: Path) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=attributes)
 
 
-def convert_sr_bh_2020(extract_dir: Path, out_path: Path) -> int:
-    """
-    SR-BH 2020 is a CSV (or set of CSVs) with url/method/body/label columns.
-    Normalises column name variants and writes a unified CSV.
-    """
+def _convert_sr_bh_v1(extract_dir: Path, out_path: Path) -> int:
+    """SR-BH 2020: concatenate CSV/TSV files and save as-is."""
     csv_files = list(extract_dir.rglob("*.csv")) or list(extract_dir.rglob("*.tsv"))
     if not csv_files:
         raise FileNotFoundError(f"No CSV/TSV files found in {extract_dir} for SR-BH 2020.")
 
     dfs = []
-    for p in csv_files:
+    for p in sorted(csv_files):
         sep = "\t" if p.suffix == ".tsv" else ","
         try:
             dfs.append(pd.read_csv(p, sep=sep, low_memory=False))
@@ -418,75 +430,15 @@ def convert_sr_bh_2020(extract_dir: Path, out_path: Path) -> int:
         raise RuntimeError("All SR-BH 2020 CSV files failed to load.")
 
     df = pd.concat(dfs, ignore_index=True)
-    renames = {
-        "Label": "label", "Class": "label", "target": "label",
-        "URL":   "url",   "Uri":   "url",
-        "Method": "method",
-        "Body":  "body",  "Payload": "body", "data": "body",
-    }
-    df.rename(columns={k: v for k, v in renames.items() if k in df.columns}, inplace=True)
-
-    for col, default in [("url", "/"), ("method", "GET"), ("body", ""), ("label", 0)]:
-        if col not in df.columns:
-            df[col] = default
-
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_path, index=False)
     log.info(f"  SR-BH 2020 converter: {len(df):,} rows")
     return len(df)
 
 
-def convert_ecml_pkdd_2007(extract_dir: Path, out_path: Path) -> int:
-    """
-    ECML/PKDD 2007 may be ARFF (Weka) or CSV format.
-    Handles both; maps text labels to numeric.
-    """
-    csv_files  = list(extract_dir.rglob("*.csv"))
-    arff_files = list(extract_dir.rglob("*.arff"))
-
-    dfs = []
-    for p in csv_files:
-        try:
-            dfs.append(pd.read_csv(p, low_memory=False))
-        except Exception as e:
-            log.warning(f"  Could not read {p.name}: {e}")
-    for p in arff_files:
-        try:
-            dfs.append(_parse_arff(p))
-        except Exception as e:
-            log.warning(f"  Could not parse ARFF {p.name}: {e}")
-
-    if not dfs:
-        raise FileNotFoundError(
-            f"No readable CSV or ARFF files found in {extract_dir} for ECML/PKDD 2007."
-        )
-
-    df = pd.concat(dfs, ignore_index=True)
-    renames = {"Label": "label", "class": "label", "Class": "label"}
-    df.rename(columns={k: v for k, v in renames.items() if k in df.columns}, inplace=True)
-
-    if "label" not in df.columns:
-        raise ValueError(f"No label column found. Columns: {list(df.columns)}")
-
-    label_map = {
-        "norm": 0, "normal": 0, "benign": 0, "0": 0,
-        "anom": 1, "attack": 1, "anomalous": 1, "1": 1,
-    }
-    df["label"] = (
-        df["label"].astype(str).str.lower().str.strip()
-        .map(label_map).fillna(1).astype(int)
-    )
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out_path, index=False)
-    log.info(f"  ECML/PKDD 2007 converter: {len(df):,} rows")
-    return len(df)
-
-
 CONVERTER_REGISTRY: dict[str, Callable[[Path, Path], int]] = {
-    "csic_v1":      convert_csic_2010,
-    "sr_bh_v1":     convert_sr_bh_2020,
-    "ecml_pkdd_v1": convert_ecml_pkdd_2007,
+    "csic_v1":      _convert_csic_v1,
+    "sr_bh_v1":     _convert_sr_bh_v1,
 }
 
 
@@ -534,6 +486,61 @@ def _adapt_csic_v1(
                 log.debug(f"Build error ({source_name}): {e}")
 
 
+_SR_BH_FIELD_RE = re.compile(
+    r'(?<!\S)(Method|Host|Body|Content-Type|User-Agent|Referer|Cookie|Accept-Encoding|Accept-Language|Accept)\s*:',
+    re.IGNORECASE,
+)
+
+
+def _parse_sr_bh_text(text: str, label: int, attack_class: str, source: str) -> HttpRecord:
+    """
+    Parse SR-BH 2020 'FieldName: value FieldName: value ...' single-line format.
+
+    Fields seen in the dataset: Method, Host, Body, Content-Type, User-Agent,
+    Referer, Cookie, Accept, Accept-Language, Accept-Encoding.
+    Host contains the URL path (and optional query string) rather than a hostname.
+    """
+    matches = list(_SR_BH_FIELD_RE.finditer(text))
+
+    fields: dict[str, str] = {}
+    for i, m in enumerate(matches):
+        key   = m.group(1).lower()
+        start = m.end()
+        end   = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        fields[key] = text[start:end].strip()
+
+    method   = (fields.get("method") or "GET").split()[0].upper() or "GET"
+    host_val = fields.get("host", "/").strip()
+    path, query_string = host_val.split("?", 1) if "?" in host_val else (host_val or "/", "")
+
+    body = fields.get("body", "").strip()
+
+    headers: dict[str, str] = {}
+    for src, hdr in [
+        ("content-type",    "Content-Type"),
+        ("user-agent",      "User-Agent"),
+        ("referer",         "Referer"),
+        ("cookie",          "Cookie"),
+        ("accept",          "Accept"),
+        ("accept-encoding", "Accept-Encoding"),
+        ("accept-language", "Accept-Language"),
+    ]:
+        val = fields.get(src, "").strip()
+        if val:
+            headers[hdr] = val
+
+    return HttpRecord(
+        method=method,
+        path=path or "/",
+        query_string=query_string,
+        headers=json.dumps(headers),
+        body=body,
+        label=label,
+        attack_class=attack_class,
+        source=source,
+    ).build_raw()
+
+
 def _adapt_sr_bh_v1(
     csv_path:    Path,
     label_col:   str,
@@ -542,75 +549,33 @@ def _adapt_sr_bh_v1(
     df               = pd.read_csv(csv_path, low_memory=False)
     actual_label_col = label_col if label_col in df.columns else _find_label_col(df)
     labels           = _extract_label(df[actual_label_col])
-    attack_classes   = _extract_attack_class(df, labels)
 
-    url_col    = next((c for c in ("url", "URL", "Uri")               if c in df.columns), None)
-    method_col = next((c for c in ("method", "Method")                if c in df.columns), None)
-    body_col   = next((c for c in ("body", "Body", "data", "Payload") if c in df.columns), None)
+    if "category" in df.columns:
+         attack_classes = (                                                                      
+                  df["category"]                                                                      
+                  .astype(str)                                                                        
+                  .str.lower()                                                                        
+                  .str.strip()                                                                        
+                  .str.replace(r'^\d+\s*[-–]\s*', '', regex=True)                                     
+                  .str.strip()                                                                        
+                  .tolist()                                                                           
+              )  
+    else:
+        attack_classes = _extract_attack_class(df, labels)
 
-    urls    = df[url_col].fillna("/").astype(str).tolist()                     if url_col    else ["/"]   * len(df)
-    methods = df[method_col].fillna("GET").astype(str).str.upper().tolist()    if method_col else ["GET"] * len(df)
-    bodies  = df[body_col].fillna("").astype(str).tolist()                     if body_col   else [""]    * len(df)
+    texts = df["text"].fillna("").astype(str).tolist()
 
-    for url, method, body, lbl, ac in zip(urls, methods, bodies, labels, attack_classes):
-        path, query = url.split("?", 1) if "?" in url else (url, "")
+    for text, lbl, ac in zip(texts, labels, attack_classes):
+        if not text.strip():
+            continue
         try:
-            yield HttpRecord(
-                method=method, path=path, query_string=query,
-                body=body, label=lbl, attack_class=ac, source=source_name,
-            ).build_raw()
+            yield _parse_sr_bh_text(text, lbl, ac, source_name)
         except Exception as e:
-            log.debug(f"Build error ({source_name}): {e}")
-
-
-def _adapt_ecml_pkdd_v1(
-    csv_path:    Path,
-    label_col:   str,
-    source_name: str,
-) -> Iterator[HttpRecord]:
-    df               = pd.read_csv(csv_path, low_memory=False)
-    actual_label_col = label_col if label_col in df.columns else _find_label_col(df)
-    labels           = _extract_label(df[actual_label_col])
-    attack_classes   = _extract_attack_class(df, labels)
-
-    raw_col    = next((c for c in ("raw", "request", "Request") if c in df.columns), None)
-    url_col    = next((c for c in ("url", "URL")                if c in df.columns), None)
-    method_col = next((c for c in ("method", "Method")          if c in df.columns), None)
-    body_col   = next((c for c in ("body", "Body", "Payload")   if c in df.columns), None)
-
-    raws    = df[raw_col].fillna("").astype(str).tolist()                          if raw_col    else None
-    urls    = df[url_col].fillna("/").astype(str).tolist()                         if url_col    else None
-    methods = df[method_col].fillna("GET").astype(str).str.upper().tolist()        if method_col else None
-    bodies  = df[body_col].fillna("").astype(str).tolist()                         if body_col   else None
-
-    for i, (lbl, ac) in enumerate(zip(labels, attack_classes)):
-        raw = raws[i] if raws is not None else ""
-
-        if raw.strip():
-            try:
-                yield _parse_raw_http(raw, lbl, ac, source_name).build_raw()
-            except Exception as e:
-                log.debug(f"Parse error row {i} ({source_name}): {e}")
-        elif urls is not None:
-            url  = urls[i]
-            meth = methods[i] if methods else "GET"
-            body = bodies[i]  if bodies  else ""
-            path, query = url.split("?", 1) if "?" in url else (url, "")
-            try:
-                yield HttpRecord(
-                    method=meth, path=path, query_string=query,
-                    body=body, label=lbl, attack_class=ac, source=source_name,
-                ).build_raw()
-            except Exception as e:
-                log.debug(f"Build error row {i} ({source_name}): {e}")
-        else:
-            log.debug(f"Skipping empty row {i} — no raw or url column ({source_name})")
-
+            log.debug(f"Parse error ({source_name}): {e}")
 
 ADAPTER_REGISTRY: dict[str, Callable[[Path, str, str], Iterator[HttpRecord]]] = {
-    "csic_v1":      _adapt_csic_v1,
-    "sr_bh_v1":     _adapt_sr_bh_v1,
-    "ecml_pkdd_v1": _adapt_ecml_pkdd_v1,
+    "csic_v1":          _adapt_csic_v1,
+    "sr_bh_v1":         _adapt_sr_bh_v1,
 }
 
 
@@ -766,9 +731,6 @@ def acquire_csv(spec: DatasetSpec, raw_dir: Path, verify: bool, force: bool) -> 
             )
             return _manifest_entry(spec, out_csv, "skipped", out_csv.stat().st_size)
 
-    log.info(f"\n{' '*8}{'─'*60}")
-    log.info(f"[{spec.name}] {spec.description}")
-
     extraction_dir: Path | None = None
     archive_file:   Path | None = None
 
@@ -777,10 +739,10 @@ def acquire_csv(spec: DatasetSpec, raw_dir: Path, verify: bool, force: bool) -> 
     if local_copy and not force:
         archive_file = local_copy
     elif spec.kaggle_handle:
-        log.info(f"  Trying kagglehub: {spec.kaggle_handle}")
+        log.info(f"  Trying downloading from kagglehub: {spec.kaggle_handle}")
         try:
             kaggle_result = Path(kagglehub.dataset_download(spec.kaggle_handle))
-            log.info(f"  kagglehub returned: {kaggle_result}")
+            log.info(f"  kagglehub returned temporary file: {kaggle_result}")
             if kaggle_result.is_dir():
                 extraction_dir = kaggle_result
             else:
@@ -806,7 +768,7 @@ def acquire_csv(spec: DatasetSpec, raw_dir: Path, verify: bool, force: bool) -> 
         _extract_archive(archive_file, extraction_dir)
 
     assert extraction_dir is not None
-    log.info(f"  Converting → {out_csv.name}")
+    log.info(f"  Converting to csv → {out_csv.name}")
     try:
         n_rows = spec.converter(extraction_dir, out_csv)
     except Exception as exc:
@@ -888,7 +850,7 @@ def _write_batched(
 # ─────────────────────────────────────────────────────────
 
 def run(args: argparse.Namespace) -> None:
-    configure_root()
+    configure_root() # for logging
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
@@ -914,7 +876,7 @@ def run(args: argparse.Namespace) -> None:
         conv_id   = getattr(ds_cfg, "converter_id", None)
         converter = CONVERTER_REGISTRY.get(conv_id)
         adapter   = ADAPTER_REGISTRY.get(conv_id)
-        log.info(f"Found configured dataset: {ds_cfg.name}, id: {conv_id}, converter: {converter}, adapter: {adapter}")
+        # log.info(f"Found configured dataset: {ds_cfg.name}, id: {conv_id}, converter: {converter}, adapter: {adapter}")
 
         if not converter or not adapter:
             log.warning(
@@ -954,7 +916,7 @@ def run(args: argparse.Namespace) -> None:
 
     for spec in specs:
         log.info(f" =========== Dataset {spec.name}:")
-        log.info(f"{' '*8}==== Phase 1 — Acquire (download → CSV)")
+        log.info(f"{' '*8}==== Phase 1/2 — Acquire (download → CSV)")
         # Phase 1 — Acquire (download → CSV)
         try:
             acq_entry = acquire_csv(
@@ -971,24 +933,29 @@ def run(args: argparse.Namespace) -> None:
             continue
 
         # Phase 2 — Adapt + Normalise + Write (single streaming pass)
-        log.info(f"{' '*8}==== Phase 2 — Adapt + Normalise + Write ")
+        log.info(f"{' '*8}==== Phase 2/2 — Adapt + Normalise + Write ")
         csv_path    = raw_dir / spec.output_csv
         parquet_out = normalized_dir / f"{spec.name}.parquet"
 
         if parquet_out.exists() and not args.force and not args.force_ingest:
-            log.info(f"[{spec.name}] Parquet exists — skipping ingestion (use --force-ingest)")
             try:
                 tbl = pq.read_table(parquet_out, columns=["label"])
                 n_t = tbl.num_rows
-                n_b = int((tbl["label"] == 0).sum().as_py())
-                n_m = n_t - n_b
             except Exception:
-                n_t = n_b = n_m = 0
-            per_dataset_stats[spec.name] = {"n_total": n_t, "n_benign": n_b, "n_malicious": n_m}
-            all_parquet_paths.append(parquet_out)
-            continue
+                n_t = 0
+            if n_t > 0:
+                n_b = int(pc.sum(pc.equal(tbl["label"], 0)).as_py()) 
+                n_m = n_t - n_b
+                log.info(
+                    f"[{spec.name}] Parquet exists ({n_t:,} rows) — skipping ingestion "
+                    "(use --force-ingest)"
+                )
+                per_dataset_stats[spec.name] = {"n_total": n_t, "n_benign": n_b, "n_malicious": n_m}
+                all_parquet_paths.append(parquet_out)
+                continue
+            log.info(f"[{spec.name}] Parquet exists but is empty — re-ingesting from CSV")
 
-        log.info(f"Ingesting + normalising [{spec.name}] …")
+        log.info(f"  Ingesting + normalising [{spec.name}] …")
         try:
             # _normalized_record_iter wraps the raw adapter output.
             # This is the only change from the original ingestion path:
@@ -1016,8 +983,7 @@ def run(args: argparse.Namespace) -> None:
         )
 
     # ── Merge all per-dataset Parquets ────────────────────────────────────────
-    # The merged file is now the first time any un-normalised data exists on disk,
-    # because each per-dataset Parquet was written via canonical_iter above.
+    total = benign = malicious = 0
     if all_parquet_paths:
         log.info(f"\nMerging {len(all_parquet_paths)} Parquet file(s)…")
         tables = []
@@ -1031,7 +997,10 @@ def run(args: argparse.Namespace) -> None:
             merged      = pa.concat_tables(tables)
             merged_path = normalized_dir / "all_datasets.parquet"
             pq.write_table(merged, merged_path, compression="snappy")
-            log.info(f"Merged: {merged_path} ({merged.num_rows:,} rows)")
+            total     = merged.num_rows
+            benign    = int(pc.sum(pc.equal(merged["label"], 0)).as_py()) 
+            malicious = total - benign
+            log.info(f"Merged: {merged_path} ({total:,} rows)")
         else:
             log.error("No tables to merge — all_datasets.parquet not written.")
     else:
@@ -1045,10 +1014,6 @@ def run(args: argparse.Namespace) -> None:
         "acquired_at": datetime.now(timezone.utc).isoformat(),
         "datasets":    manifest,
     }, indent=2))
-
-    total     = sum(s.get("n_total",     0) for s in per_dataset_stats.values())
-    benign    = sum(s.get("n_benign",    0) for s in per_dataset_stats.values())
-    malicious = sum(s.get("n_malicious", 0) for s in per_dataset_stats.values())
 
     # Stats previously written by 02_normalize_schema.py are now emitted here.
     # The class_distribution field requires a full scan of the merged file;
@@ -1080,10 +1045,10 @@ def run(args: argparse.Namespace) -> None:
         init_experiment(cfg)
         with mlflow.start_run(run_name="01_acquire_and_normalize"):
             mlflow.log_params({
-                "datasets":     [s.name for s in specs],
-                "only_filter":  args.only or "all",
-                "force":        args.force,
-                "force_ingest": args.force_ingest,
+                 "datasets":     json.dumps([s.name for s in specs]),                                       
+                 "only_filter":  json.dumps(args.only) if args.only else "all",                             
+                 "force":        str(args.force),                                                           
+                 "force_ingest": str(args.force_ingest),   
             })
             log_metrics_dict({
                 "total_records":     float(total),
@@ -1098,15 +1063,17 @@ def run(args: argparse.Namespace) -> None:
                         prefix=f"{ds_name}/",
                     )
     except Exception as exc:
-        log.warning(f"MLflow logging skipped: {exc}")
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True) 
 
     # ── Final summary ─────────────────────────────────────────────────────────
     log.info(f"\n{'═'*60}")
     log.info(f"Acquired: {len(specs) - len(failed_acquire)}/{len(specs)}")
     for entry in manifest:
+        name = entry["name"]
         icon = "✓" if entry.get("status") in ("downloaded", "skipped") else "✗"
-        rows = f"  {entry.get('n_rows', 0):,} rows" if "n_rows" in entry else ""
-        log.info(f"  {icon} {entry['name']:20s}  [{entry.get('status', '?')}]{rows}")
+        n_total = per_dataset_stats.get(name, {}).get("n_total", 0)
+        rows = f"  {n_total:,} rows" if n_total else ""
+        log.info(f"  {icon} {name:20s}  [{entry.get('status', '?')}]{rows}")
 
     if failed_acquire:
         log.error(

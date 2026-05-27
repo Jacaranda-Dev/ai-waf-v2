@@ -102,10 +102,13 @@ class DataSchemaConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    datasets: list[DatasetEntry] = Field(default_factory=list)
-    schema:   DataSchemaConfig   = Field(default_factory=DataSchemaConfig)
-    split:    SplitConfig        = Field(default_factory=SplitConfig)
-    dedup:    DedupConfig        = Field(default_factory=DedupConfig)
+    model_config = ConfigDict(populate_by_name=True) 
+    
+    datasets:    list[DatasetEntry] = Field(default_factory=list) 
+    data_schema: DataSchemaConfig   = Field(default_factory=DataSchemaConfig, alias="schema")  
+    split:       SplitConfig        = Field(default_factory=SplitConfig) 
+    dedup:       DedupConfig        = Field(default_factory=DedupConfig)  
+
 
 
 class AugRulesConfig(BaseModel):
@@ -317,7 +320,7 @@ class EvaluationConfig(BaseModel):
 
 
 class MLflowConfig(BaseModel):
-    tracking_uri:    str            = "./mlruns"
+    tracking_uri:    str            = "sqlite:///mlruns/mlflow.db"
     experiment_name: str            = "waf-ai"
     tags:            dict[str, str] = Field(default_factory=dict)
 

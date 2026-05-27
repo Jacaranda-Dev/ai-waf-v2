@@ -1,0 +1,262 @@
+ ▐▛███▜▌   Claude Code v2.1.150
+▝▜█████▛▘  Sonnet 4.6 · Claude Pro
+  ▘▘ ▝▝    /workspace
+
+❯ /init                                                                         
+
+● Explore(Codebase analysis for CLAUDE.md)
+  ⎿  Done (33 tool uses · 51.2k tokens · 1m 52s)
+  (ctrl+o to expand)
+
+● Now I'll create the CLAUDE.md file based on this thorough analysis.
+
+● Write(CLAUDE.md)
+  ⎿  Wrote 96 lines to CLAUDE.md
+      2 # CLAUDE.md
+      3 This file provides guidance to Claude Code (claude.ai/code) when 
+        working with code in this repository.
+      5 ## Project Overview
+      6 
+      7 **ai-waf-v2** is a Transformer-based Web Application Firewall (WA
+         research pipeline for training and evaluating neural networks to
+         detect malicious HTTP requests.
+      8 
+      9 ## Commands
+     … +126 lines (ctrl+o to expand)
+
+● Created /workspace/CLAUDE.md with:
+
+  - Commands — setup (with modes), linting, testing (including single-test
+  syntax), and the full pipeline stage-by-stage
+  - Architecture — the 7-stage pipeline, core library module responsibilities,
+  dual tokenization tracks, and data flow
+  - Configuration — points to config/pipeline.yaml as the single source of truth
+   for hyperparameters, with key values called out
+  - MLflow — how to access experiment tracking
+  - Testing philosophy — clarifies tests are synthetic/in-memory so contributors
+   know they can run them without GPU or data downloads
+
+✻ Cooked for 2m 46s
+
+❯ /code-review                                                                  
+
+● Bash(git diff @{upstream}...HEAD 2>/dev/null || git diff main...HEAD
+      2>/dev/null || git diff HEAD~1 2>/dev/null || git diff HEAD 2>/dev/null |
+      head -500)
+  ⎿  (No output)
+
+● Bash(git status && git log --oneline -10)
+  ⎿  Error: Exit code 128
+     fatal: not a git repository (or any parent up to mount point /)
+     Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+
+● No git history exists. I'll review the full codebase directly as the "diff"
+  scope.
+
+  Searched for 2 patterns (ctrl+o to expand)
+
+● Now I'll read all core library files and key stage scripts in parallel across
+  three finder angles.
+
+  Read 15 files (ctrl+o to expand)
+
+● Now I'll run all three finder angles in parallel.
+
+● 3 agents finished (ctrl+o to expand)
+   ├ Angle A — line-by-line code scan · 0 tool uses
+   │ ⎿  Done
+   ├ Angle B — removed-behavior / missing guard audit · 9 tool uses · 30.0k tokens
+   │ ⎿  Done
+   └ Angle C — cross-file caller/callee tracer · 21 tool uses · 40.8k tokens
+     ⎿  Done
+
+● Now I'll verify the top candidates with a single verifier pass.
+
+  Searched for 4 patterns, read 1 file (ctrl+o to expand)
+
+● All three angles converge. Here are the verified findings ranked by severity:
+
+  [
+    {
+      "file": "stages/6_distillation_and_compression/02_distill_train.py",
+      "line": 225,
+      "summary": "DistillationTrainer is constructed with an unknown 
+  `temperature_scheduler` kwarg that its __init__ does not accept",
+      "failure_scenario": "02_distill_train.py:225 passes 
+  `temperature_scheduler=temp_sched` to DistillationTrainer, whose __init__ 
+  (trainer.py:63-80) declares no such parameter and has no **kwargs catch-all. 
+  Python raises TypeError before a single training step runs, making the entire 
+  distillation pipeline non-executable."
+    },
+    {
+      "file": "stages/6_distillation_and_compression/02_distill_train.py",
+      "line": 123,
+      "summary": "prepare_for_int8_quantization is called with `exclude_modules`
+   kwarg that the method signature does not accept",
+      "failure_scenario": "02_distill_train.py:123 calls 
+  `student.prepare_for_int8_quantization(exclude_modules=[...])`, but 
+  StudentClassifier.prepare_for_int8_quantization (student.py:158) is declared 
+  as `def prepare_for_int8_quantization(self)` with no additional parameters. 
+  Any INT8 QAT training run hits a TypeError immediately."
+    },
+    {
+      "file": "ai_waf_v2/data/dataset.py",
+      "line": 153,
+      "summary": "WafDatasetMmap.__getitem__ references self._attack_class which
+   is never initialized in __init__",
+      "failure_scenario": "WafDatasetMmap.__init__ (lines 117-133) reads only 
+  self._texts and self._labels; self._attack_class is never assigned. Every 
+  __getitem__ call raises AttributeError: 'WafDatasetMmap' object has no 
+  attribute '_attack_class', making the mmap dataset completely unusable."
+    },
+    {
+      "file": "ai_waf_v2/distill/losses.py",
+      "line": 117,
+      "summary": "DistillationLoss receives the raw un-projected student hidden 
+  state, causing a shape mismatch crash when hidden dimensions differ",
+      "failure_scenario": "When hidden_mse_weight > 0, trainer.py:249 passes 
+  student_out.get('hidden') — the raw cls_hidden of shape (B, 256) — to 
+  DistillationLoss.forward(). F.mse_loss at line 117 then compares it against 
+  teacher_hidden of shape (B, 768). RuntimeError: shape mismatch. The 
+  hidden_projection layer inside StudentClassifier computes the aligned tensor 
+  internally but stores it only in loss_mse, never surfacing it in out['hidden']
+   for the trainer to use."
+    },
+    {
+      "file": "ai_waf_v2/data/dataset.py",
+      "line": 73,
+      "summary": "WafDataset.__getitem__ truncates but never pads sequences, 
+  returning variable-length tensors that crash the default DataLoader 
+  collate_fn",
+      "failure_scenario": "Lines 73-74 truncate enc.ids and enc.attention_mask 
+  to seq_len, but the padding block (lines 78-80) is commented out. Items 
+  shorter than seq_len are returned as-is with different tensor lengths. Any 
+  DataLoader that does not explicitly use WafCollator (e.g. tests, ad-hoc eval 
+  scripts) will crash with RuntimeError: stack expects each tensor to be equal 
+  size on the first multi-sample batch."
+    },
+    {
+      "file": "ai_waf_v2/eval/metrics.py",
+      "line": 178,
+      "summary": "find_threshold_at_fpr returns the highest threshold satisfying
+   the FPR constraint instead of the lowest, silently maximising specificity at 
+  the cost of recall",
+      "failure_scenario": "Thresholds are swept 0→1; FPR decreases monotonically
+   as threshold rises. The loop overwrites best_threshold every time fpr <= 
+  target_fpr, so it converges on the highest qualifying threshold — the most 
+  conservative operating point. A WAF calibrated with this function at 
+  target_fpr=0.001 is set to an unnecessarily high threshold, missing all 
+  attacks that a correctly chosen (lowest satisfying) threshold would have 
+  caught."
+    },
+    {
+      "file": "ai_waf_v2/eval/metrics.py",
+      "line": 109,
+      "summary": "compute_per_class_metrics double-counts samples whose 
+  attack_class is non-benign but whose label is 0, corrupting per-class FPR",
+      "failure_scenario": "For every sample, line 110 adds its index to 
+  class_indices[cls] and line 111-112 also adds it to benign_indices if 
+  label==0. A sample with attack_class='sqli' and label=0 (mislabeled benign) 
+  ends up in both benign_tensor and attack_tensor, so idx for 'sqli' contains it
+   twice. compute_metrics on the doubled index inflates the TP/FP/TN/FN counts 
+  for that class, producing wrong precision, recall, and FPR."
+    },
+    {
+      "file": "ai_waf_v2/data/dataset.py",
+      "line": 101,
+      "summary": "class_weights crashes with ValueError on an empty dataset 
+  because max() is called on an empty Counter",
+      "failure_scenario": "If a split Parquet file produces zero rows (empty 
+  filter, dry-run fixture, or all-filtered augmentation stage), 
+  Counter(self._labels).keys() is empty and max(counts.keys()) raises 
+  ValueError: max() arg is an empty sequence. This hits before training starts 
+  whenever class_weights is accessed to initialise the loss function."
+    },
+    {
+      "file": "ai_waf_v2/models/student.py",
+      "line": 184,
+      "summary": "prepare_for_int8_quantization assigns the original 
+  nn.Parameter reference directly to Linear8bitLt, bypassing the 
+  dtype-conversion path bitsandbytes requires",
+      "failure_scenario": "new.weight = child.weight (line 184) assigns the 
+  existing fp32 parameter object to the bitsandbytes Linear8bitLt layer without 
+  wrapping it as a new Parameter with the expected fp16 dtype. On the first 
+  forward pass after .to(device), bitsandbytes may leave weights un-quantized 
+  (silently running fp32 inside an int8 kernel) or raise a runtime error from a 
+  dtype mismatch in the CUDA kernel. The correct pattern is new.weight = 
+  nn.Parameter(child.weight.data.to(torch.float16))."
+    },
+    {
+      "file": "ai_waf_v2/eval/adversarial.py",
+      "line": 51,
+      "summary": "tamper_randomcase uses unseeded random.random(), making 
+  adversarial evaluation non-reproducible across runs",
+      "failure_scenario": "tamper_randomcase samples each character's case from 
+  random.random() with no seed. Two consecutive calls to 
+  AdversarialEvaluator.run(..., tamper_scripts=['randomcase']) on the same 
+  records produce different detection_rate/evasion_rate values. Regression 
+  tracking and benchmark comparisons across machines or time are impossible for 
+  the randomcase tamper, while all other tampers in TAMPER_REGISTRY are fully 
+  deterministic."
+    }
+  ]
+
+  Summary of findings by category:
+
+  ┌─────┬───────────────────┬───────────────────────────────────────────────┐
+  │  #  │     Severity      │                    Nature                     │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │     │                   │ Stage script passes kwargs that the library   │
+  │ 1–2 │ Crash (TypeError) │ class doesn't accept — distillation pipeline  │
+  │     │                   │ and INT8 QAT both dead-on-arrival             │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 3   │ Crash             │ WafDatasetMmap always crashes on __getitem__; │
+  │     │ (AttributeError)  │  _attack_class never initialized              │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │     │ Crash (shape      │ Hidden-state MSE in distillation trainer      │
+  │ 4   │ mismatch)         │ passes un-projected student hidden (256-d)    │
+  │     │                   │ against teacher hidden (768-d)                │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 5   │ Crash (collate)   │ WafDataset items are variable-length when     │
+  │     │                   │ used without WafCollator                      │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │     │ Silent wrong      │ find_threshold_at_fpr calibrates the WAF to   │
+  │ 6   │ result            │ maximum-specificity (wrong direction),        │
+  │     │                   │ silently underdetecting attacks               │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 7   │ Silent wrong      │ Per-class metrics double-count mislabeled     │
+  │     │ metrics           │ samples                                       │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 8   │ Crash (edge case) │ class_weights crashes on empty datasets       │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 9   │ Silent wrong      │ INT8 weight assignment skips bitsandbytes     │
+  │     │ behavior          │ dtype conversion                              │
+  ├─────┼───────────────────┼───────────────────────────────────────────────┤
+  │ 10  │ Reproducibility   │ randomcase tamper is non-deterministic        │
+  └─────┴───────────────────┴───────────────────────────────────────────────┘
+
+✻ Churned for 6m 6s
+
+※ recap: Code review of the ai-waf-v2 WAF classifier codebase found 10 bugs. Next step is fixing them, starting with the two crash-before-training issues in the distillation stage script. (disable recaps in /config)
+
+❯ /export review.txt                                                            
+  ⎿  Conversation exported to: /workspace/review.txt
+
+! ls                                                                            
+  ⎿  CLAUDE.md
+     Makefile
+     README.md
+     ai_waf_v2
+     config
+     data
+     docs
+     mlruns
+     models
+     notebooks
+     papers
+     pyproject.toml
+     reports
+     review.txt
+     stages
+     tests
+     tokenizers

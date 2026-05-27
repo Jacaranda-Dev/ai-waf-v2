@@ -297,8 +297,11 @@ eval_only: eval_detection eval_latency eval_adversarial eval_ablation \
            eval_interp compare_all
 
 ui:
-	$(MLFLOW) ui --port 5000 --backend-store-uri ./mlruns
+	$(MLFLOW) ui --port 5000 --backend-store-uri sqlite:///mlruns/mlflow.db 
 
+stop_ui:                                                                                                    
+	@pkill -f "mlflow ui" && echo "MLflow UI stopped." || echo "No MLflow UI process found."                  
+   
 # ─────────────────────────────────────────────
 # CLEAN TARGETS (granular — don't nuke everything)
 # ─────────────────────────────────────────────

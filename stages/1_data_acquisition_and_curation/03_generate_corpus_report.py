@@ -163,7 +163,7 @@ def _report_taxonomy_inventory(
     class_counts    = Counter(df["attack_class"].tolist())
     source_counts   = Counter(df["source"].tolist())
 
-    required  = set(cfg.data.schema.attack_classes)
+    required  = set(cfg.data.data_schema.attack_classes) 
     present   = {cls for cls, cnt in class_counts.items() if cls != "benign" and cnt > 0}
     missing   = required - present
     low_count = {
