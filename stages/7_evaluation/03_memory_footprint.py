@@ -51,6 +51,27 @@ def run(args):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Memory footprint saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="03_memory_footprint"):
+            metrics: dict[str, float] = {}
+            for label, info in results.items():
+                if "disk_mb" in info:
+                    metrics[f"{label}_disk_mb"] = float(info["disk_mb"])
+                if "n_params" in info:
+                    metrics[f"{label}_n_params"] = float(info["n_params"])
+                if "vram_weights_fp16_mb" in info:
+                    metrics[f"{label}_vram_fp16_mb"] = float(info["vram_weights_fp16_mb"])
+                if "gpu_peak_activation_mb" in info and info["gpu_peak_activation_mb"] is not None:
+                    metrics[f"{label}_gpu_peak_mb"] = float(info["gpu_peak_activation_mb"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 def parse_args():
     p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
 if __name__ == "__main__": run(parse_args())

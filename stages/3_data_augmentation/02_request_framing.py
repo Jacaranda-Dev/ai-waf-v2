@@ -483,6 +483,27 @@ def run(args: argparse.Namespace) -> None:
         "provider":             provider,
     }, indent=2))
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="02_request_framing"):
+            mlflow.log_params({
+                "provider": provider or "none",
+                "n_rest_samples": n_rest,
+            })
+            log_metrics_dict({
+                "n_attack_reframed": float(len(attack_records)),
+                "n_benign_rest":     float(len(benign_rest)),
+                "n_llm_benign":      float(len(all_records) - len(attack_records) - len(benign_rest)),
+                "total_records":     float(len(all_records)),
+                "n_attack":          float(n_attack),
+                "n_benign":          float(n_benign),
+            })
+            mlflow.log_artifact(str(stats_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

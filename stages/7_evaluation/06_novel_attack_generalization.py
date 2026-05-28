@@ -422,6 +422,32 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(results, indent=2))
     log.info(f"\nNovel attack generalisation saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="06_novel_attack_generalization"):
+            mlflow.log_params({
+                "n_samples_per_class": n_samples,
+                "seed":                seed,
+                "n_attack_classes":    len(ATTACK_GRAMMARS),
+            })
+            metrics: dict[str, float] = {}
+            detection_rates = []
+            for attack_name, info in results.items():
+                dr = info["detection_rate"]
+                detection_rates.append(dr)
+                metrics[f"detection_{attack_name}"]  = float(dr)
+                metrics[f"evasion_{attack_name}"]    = float(info["evasion_rate"])
+                metrics[f"ci_low_{attack_name}"]     = float(info["ci_95_low"])
+                metrics[f"ci_high_{attack_name}"]    = float(info["ci_95_high"])
+            if detection_rates:
+                metrics["mean_detection_rate"] = float(sum(detection_rates) / len(detection_rates))
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

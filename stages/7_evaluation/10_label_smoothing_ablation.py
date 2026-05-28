@@ -75,6 +75,28 @@ def label_smoothing_ablation(cfg) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Label smoothing ablation saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="10_label_smoothing_ablation"):
+            mlflow.log_params({
+                "smoothing_values": str(smoothing_vals),
+                "n_smoothing_levels": len(smoothing_vals),
+            })
+            metrics: dict[str, float] = {}
+            for eps_key, m in results.items():
+                if isinstance(m, dict):
+                    for metric_name in ("auc_pr", "f1", "fpr"):
+                        val = m.get(metric_name)
+                        if isinstance(val, (int, float)):
+                            metrics[f"{eps_key}_{metric_name}"] = float(val)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     return results
 
 

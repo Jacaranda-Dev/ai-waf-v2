@@ -479,6 +479,30 @@ def run(args: argparse.Namespace) -> None:
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(stats, indent=2))
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="04_quality_gate"):
+            mlflow.log_params({
+                "max_unk_ratio":       filt_cfg.max_unk_ratio,
+                "semantic_threshold":  cfg.data.dedup.semantic_threshold,
+                "leakage_threshold":   0.70,
+                "n_workers":           args.workers,
+            })
+            metrics: dict[str, float] = {
+                "n_input":        float(n_total),
+                "n_passed":       float(n_passed),
+                "n_rejected":     float(n_rejected),
+                "rejection_rate": float(rej_rate),
+            }
+            for reason, count in stats.get("rejection_reasons", {}).items():
+                metrics[f"rejected_{reason}"] = float(count)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(sp))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

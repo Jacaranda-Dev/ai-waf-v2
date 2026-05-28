@@ -338,6 +338,39 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
     out = reports_dir / "tokenizer_ablation.json"
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Tokenizer ablation saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="07_tokenizer_ablation"):
+            mlflow.log_params({
+                "anchor_epochs":      anchor_epochs,
+                "anchor_sample_frac": anchor_sample_frac,
+                "seed":               seed,
+            })
+            metrics: dict[str, float] = {}
+            for track in ("track_a", "track_b"):
+                t = results.get(track, {})
+                if not isinstance(t, dict):
+                    continue
+                for key in ("oov_rate", "fertility", "avg_seq_len"):
+                    val = t.get(key)
+                    if isinstance(val, (int, float)):
+                        metrics[f"{track}_{key}"] = float(val)
+            for probe_key in ("lr_probe_track_a", "lr_probe_track_b",
+                              "anchor_track_a", "anchor_track_b"):
+                p = results.get(probe_key, {})
+                if isinstance(p, dict):
+                    for m_key in ("auc_pr", "f1", "fpr"):
+                        val = p.get(m_key)
+                        if isinstance(val, (int, float)):
+                            metrics[f"{probe_key}_{m_key}"] = float(val)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     return results
 
 

@@ -198,6 +198,31 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(comparison, indent=2))
     log.info(f"Full comparison report saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="05_compare_tokenizers"):
+            mlflow.log_params({
+                "eval_sample_size":  EVAL_SAMPLE_SIZE,
+                "seq_len":           cfg.tokenizer.seq_len,
+                "used_cache":        bool(cached_a and cached_b),
+                "recommendation":    comparison.get("recommendation", ""),
+            })
+            metrics: dict[str, float] = {}
+            for track in ("track_a", "track_b"):
+                t = comparison.get(track, {})
+                for key in ("oov_rate", "fertility", "truncation_rate", "avg_seq_len"):
+                    val = t.get(key)
+                    if isinstance(val, (int, float)):
+                        metrics[f"{track}_{key}"] = float(val)
+            if comparison.get("vocab_jaccard_overlap") is not None:
+                metrics["vocab_jaccard_overlap"] = float(comparison["vocab_jaccard_overlap"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Side-by-side tokenizer comparison.")

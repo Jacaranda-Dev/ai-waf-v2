@@ -325,6 +325,36 @@ def run(args: argparse.Namespace) -> None:
     (report_dir / "latency_summary.json").write_text(json.dumps(report, indent=2))
     log.info(f"\nLatency report saved to {report_dir / 'latency_summary.json'}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="02_latency_bench"):
+            mlflow.log_params({
+                "n_timing_samples":  N_TIMING_SAMPLES,
+                "batch_sizes":       str(batch_sizes),
+                "devices":           str(devices),
+                "inline_p99_slo_ms": cfg.slo.latency_inline_p99_ms,
+                "throughput_slo_rps": cfg.slo.throughput_min_rps,
+            })
+            metrics: dict[str, float] = {}
+            for model_key, model_val in all_results.items():
+                results_list = model_val.get("results", [])
+                bs1 = next((r for r in results_list if r.get("batch_size") == 1), None)
+                if bs1:
+                    metrics[f"{model_key}_p99_ms"]      = float(bs1["p99_ms"])
+                    metrics[f"{model_key}_p99_9_ms"]    = float(bs1.get("p99_9_ms", 0))
+                    metrics[f"{model_key}_jitter_ms"]   = float(bs1.get("jitter_std_ms", 0))
+                    metrics[f"{model_key}_rps"]         = float(bs1["throughput_rps"])
+                slo = model_val.get("slo", {})
+                if slo:
+                    metrics[f"{model_key}_slo_p99_ok"]  = float(slo.get("p99_ok", False))
+                    metrics[f"{model_key}_slo_rps_ok"]  = float(slo.get("rps_ok", False))
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(report_dir / "latency_summary.json"))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

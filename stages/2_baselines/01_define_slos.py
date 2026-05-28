@@ -1,11 +1,11 @@
 """
-stages/2_baselines/02_define_slos.py
+stages/2_baselines/01_define_slos.py
 ------------------------------------
-Stage 0.0 — Write SLO targets and hardware spec to reports/ so every
+Stage 2.1 — Write SLO targets and hardware spec to reports/ so every
 subsequent evaluation stage can load them without re-reading the config.
 
 Run:
-    python stages/2_baselines/02_define_slos.py --config config/pipeline.yaml
+    python stages/2_baselines/01_define_slos.py --config config/pipeline.yaml
 """
 from __future__ import annotations
 import argparse, json
@@ -56,6 +56,22 @@ def run(args: argparse.Namespace) -> None:
         if k != "notes":
             log.info(f"  latency.{k} = {v}")
     log.info(f"  accuracy.max_fpr = {slo_doc['accuracy']['max_false_positive_rate']}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="01_define_slos"):
+            mlflow.log_params({
+                "latency_inline_p99_ms":  cfg.slo.latency_inline_p99_ms,
+                "latency_offline_p99_ms": cfg.slo.latency_offline_p99_ms,
+                "throughput_min_rps":     cfg.slo.throughput_min_rps,
+                "max_false_positive_rate": cfg.slo.max_false_positive_rate,
+                "primary_metric":         slo_doc["primary_metric"],
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
 def parse_args():
     p = argparse.ArgumentParser()

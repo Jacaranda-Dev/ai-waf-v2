@@ -688,6 +688,47 @@ def run(args: argparse.Namespace) -> None:
     baselines_path.write_text(json.dumps(existing, indent=2))
     log.info(f"\nAll classical ML baselines [{phase}] saved to {baselines_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name=f"03_classical_ml_baseline_{phase}"):
+            mlflow.log_params({
+                "phase":            phase,
+                "also_lgbm":        args.also_lgbm,
+                "no_ablation":      args.no_ablation,
+                "hash_n_features":  HASH_N_FEATURES,
+                "out_file":         args.out_file,
+            })
+            metrics: dict[str, float] = {}
+            for key in ["aho_corasick_fast_match", "xgboost_hashed_ngram_http",
+                        "xgboost_hashed_ngram_ablation", "lightgbm_hashed_ngram"]:
+                if key not in existing:
+                    continue
+                e = existing[key]
+                ov = e.get("overall", {})
+                lat = e.get("latency", {})
+                prefix = key.replace("_", ".")
+                if ov.get("f1") is not None:
+                    metrics[f"{prefix}.f1"]      = float(ov["f1"])
+                if ov.get("fpr") is not None:
+                    metrics[f"{prefix}.fpr"]     = float(ov["fpr"])
+                if ov.get("auc_pr") is not None:
+                    metrics[f"{prefix}.auc_pr"]  = float(ov["auc_pr"])
+                if lat.get("throughput_rps") is not None:
+                    metrics[f"{prefix}.rps"]     = float(lat["throughput_rps"])
+            if "xgboost_hashed_ngram_http" in existing and "xgboost_hashed_ngram_ablation" in existing:
+                ov_xgb = existing["xgboost_hashed_ngram_http"].get("overall", {})
+                ov_abl = existing["xgboost_hashed_ngram_ablation"].get("overall", {})
+                if ov_xgb.get("f1") and ov_abl.get("f1"):
+                    metrics["lift_f1"]   = float(ov_xgb["f1"] - ov_abl["f1"])
+                if ov_xgb.get("auc_pr") and ov_abl.get("auc_pr"):
+                    metrics["lift_auc"]  = float(ov_xgb["auc_pr"] - ov_abl["auc_pr"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(baselines_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     # Summary table for the paper
     log.info("\n── Classical ML Summary (for paper Table) ──")
     log.info(f"{'Model':42s}  {'F1':>7}  {'FPR':>8}  {'AUC-PR':>7}  {'p99ms':>7}  {'RPS':>8}")

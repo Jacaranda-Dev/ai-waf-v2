@@ -629,6 +629,25 @@ def run(args: argparse.Namespace) -> None:
     }, indent=2))
     log.info(f"Synthesis complete: {len(all_records):,} total records across {len(stats)} classes")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="01_attack_synthesis"):
+            mlflow.log_params({
+                "target_per_class": target,
+                "chain_length":     chain_len,
+                "generators_used":  [g.name for g in generators],
+                "n_classes_filled": len(stats),
+            })
+            metrics: dict[str, float] = {"total_generated": float(len(all_records))}
+            for cls, n in stats.items():
+                metrics[f"generated_{cls}"] = float(n)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(stats_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

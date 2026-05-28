@@ -126,6 +126,32 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Student arch summary saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="01_student_arch"):
+            mlflow.log_params({
+                "d_model":         scfg.d_model,
+                "n_layers":        scfg.n_layers,
+                "n_heads":         scfg.n_heads,
+                "d_ff":            scfg.d_ff,
+                "vocab_size":      scfg.vocab_size,
+                "quantization":    scfg.quantization,
+                "teacher_d_model": tcfg.d_model,
+            })
+            log_metrics_dict({
+                "n_params":            float(n_s),
+                "compression_vs_99m":  float(compression),
+                "vram_fp16_mb":        float(vram_fp16),
+                "vram_int8_mb":        float(vram_int8),
+                "compression_warn_low":  float(compression < _COMPRESSION_WARN_LOW),
+                "compression_warn_high": float(compression > _COMPRESSION_WARN_HIGH),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Print student architecture summary.")

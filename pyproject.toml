@@ -42,6 +42,12 @@ dependencies = [
     # experiment tracking
     "mlflow>=2.11",
  
+    # classical ML baselines (Stage 2)
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "scipy>=1.11",
+    "pyahocorasick>=2.0",
+
     # evaluation
     "torchmetrics>=1.3",
     "shap>=0.44",

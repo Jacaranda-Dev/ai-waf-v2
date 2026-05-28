@@ -73,6 +73,27 @@ def model_size_scaling(cfg) -> dict:
     out = reports_dir / "model_size_scaling.json"
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Model size scaling saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="09_model_size_scaling"):
+            metrics: dict[str, float] = {}
+            for label, info in results.items():
+                if not isinstance(info, dict):
+                    continue
+                if isinstance(info.get("n_params"), int):
+                    metrics[f"{label}_n_params"] = float(info["n_params"])
+                for m_key in ("auc_pr", "f1", "fpr"):
+                    val = info.get(m_key)
+                    if isinstance(val, (int, float)):
+                        metrics[f"{label}_{m_key}"] = float(val)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     return results
 
 

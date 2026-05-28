@@ -62,6 +62,25 @@ def run(args):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Error analysis saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="13_error_analysis"):
+            mlflow.log_params({
+                "n_test_samples": len(all_labels),
+            })
+            log_metrics_dict({
+                "n_fp":       float(result["n_fp"]),
+                "n_fn":       float(result["n_fn"]),
+                "fp_rate":    float(result["n_fp"] / max(1, len(all_labels))),
+                "fn_rate":    float(result["n_fn"] / max(1, len(all_labels))),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 def parse_args():
     p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
 if __name__ == "__main__": run(parse_args())

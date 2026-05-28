@@ -62,6 +62,24 @@ def run(args):
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"SHAP analysis saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="12_shap_analysis"):
+            mlflow.log_params({
+                "n_background_samples": len(background_texts),
+                "n_test_samples":       len(test_malicious[:5]),
+                "shap_nsamples":        100,
+            })
+            log_metrics_dict({
+                "n_explained_samples": float(len(results)),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 def parse_args():
     p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
 if __name__ == "__main__": run(parse_args())

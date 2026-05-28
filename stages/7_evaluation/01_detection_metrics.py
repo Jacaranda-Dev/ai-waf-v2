@@ -345,6 +345,35 @@ def run(args: argparse.Namespace) -> None:
     )
     log.info(f"\nFull results saved to {reports_dir / 'detection_results.json'}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="01_detection_metrics"):
+            mlflow.log_params({
+                "high_entropy_threshold": HIGH_ENTROPY_THRESHOLD,
+                "fp_cluster_k":           FP_CLUSTER_K,
+                "fp_pca_components":      FP_PCA_COMPONENTS,
+                "n_models_evaluated":     len(results),
+            })
+            metrics: dict[str, float] = {}
+            for model_name, model_data in results.items():
+                m = model_data.get("overall", model_data.get("val_metrics", {}))
+                if not m:
+                    continue
+                prefix = model_name
+                for key in ("f1", "precision", "recall", "fpr", "auc_pr", "auc_roc"):
+                    val = m.get(key)
+                    if isinstance(val, (int, float)):
+                        metrics[f"{prefix}_{key}"] = float(val)
+                fp = model_data.get("fp_analysis", {})
+                if fp:
+                    metrics[f"{prefix}_total_fp"] = float(fp.get("total_fp", 0))
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(reports_dir / "detection_results.json"))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def _log_result(name: str, result: dict) -> None:
     if "error" in result:

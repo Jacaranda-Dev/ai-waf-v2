@@ -113,6 +113,28 @@ def run(args: argparse.Namespace) -> None:
     )
     log.info(f"\nAdversarial summary saved to {reports_dir / 'adversarial_summary.json'}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="04_evasion_payloads"):
+            mlflow.log_params({
+                "n_models":         len(all_reports),
+                "n_malicious_cap":  2000,
+                "n_tamper_scripts": len(list(TAMPER_REGISTRY.keys())),
+            })
+            metrics: dict[str, float] = {}
+            for model_label, tamper_list in all_reports.items():
+                if tamper_list:
+                    mean_det = sum(r["detection"] for r in tamper_list) / len(tamper_list)
+                    mean_eva = sum(r["evasion"] for r in tamper_list) / len(tamper_list)
+                    metrics[f"{model_label}_mean_detection"] = float(mean_det)
+                    metrics[f"{model_label}_mean_evasion"]   = float(mean_eva)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(reports_dir / "adversarial_summary.json"))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

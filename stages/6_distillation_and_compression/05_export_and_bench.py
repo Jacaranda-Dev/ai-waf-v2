@@ -402,6 +402,40 @@ def run(args: argparse.Namespace) -> None:
     summary_path.write_text(json.dumps(summary, indent=2))
     log.info(f"\nUnified latency summary saved to {summary_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="05_export_and_bench"):
+            mlflow.log_params({
+                "deployment_status": deployment_status,
+                "p99_slo_ms":        p99_slo,
+                "throughput_slo_rps": tp_slo,
+                "onnx_path":         str(onnx_path),
+                "trt_built":         bool(trt_built),
+            })
+            metrics: dict[str, float] = {
+                "all_slo_pass": float(all_pass),
+            }
+            for check in slo_checks:
+                provider = check["provider"]
+                metrics[f"slo_pass_{provider}"] = float(check["status"] == "PASS")
+            # Log bs=1 p99 per provider where available
+            for provider_key, result_list in [
+                ("pytorch", pt_results),
+                ("ort_cuda", ort_cuda_results),
+                ("ort_cpu", ort_cpu_results),
+                ("trt", trt_results),
+            ]:
+                bs1 = next((r for r in result_list if r.get("batch_size") == 1), None)
+                if bs1:
+                    metrics[f"p99_ms_{provider_key}"] = float(bs1["p99_ms"])
+                    metrics[f"throughput_{provider_key}"] = float(bs1["throughput"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(summary_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     # ── CI/CD gate ────────────────────────────────
     if not all_pass:
         log.error(

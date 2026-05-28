@@ -80,6 +80,30 @@ def augmentation_ablation(cfg) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Augmentation ablation saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="08_augmentation_ablation"):
+            mlflow.log_params({
+                "n_aug_sources": len(aug_sources),
+            })
+            metrics: dict[str, float] = {}
+            full_m = results.get("full", {})
+            if full_m:
+                metrics["full_auc_pr"] = float(full_m.get("auc_pr", 0))
+                metrics["full_f1"]     = float(full_m.get("f1", 0))
+            for key, val in results.items():
+                if key.startswith("drop_") and isinstance(val, dict):
+                    safe_key = key.replace("drop_aug_", "drop_")
+                    metrics[f"{safe_key}_auc_pr"] = float(val.get("auc_pr", 0))
+                    metrics[f"{safe_key}_delta"]  = float(val.get("delta", 0))
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     return results
 
 

@@ -419,6 +419,56 @@ def run(args: argparse.Namespace) -> None:
     log.info("─" * 60)
     log.info(f"Corpus report complete. All artefacts written to {reports_dir}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="03_generate_corpus_report"):
+            mlflow.log_params({
+                "sections_run": sorted(sections),
+                "source_parquet": str(in_path) if df is not None else "none",
+            })
+            if df is not None:
+                if "dataset_analysis" in sections:
+                    da_path = reports_dir / "dataset_analysis.json"
+                    if da_path.exists():
+                        import json as _json
+                        da = _json.loads(da_path.read_text())
+                        log_metrics_dict({
+                            "total_records":   float(da.get("total_records", 0)),
+                            "benign":          float(da.get("benign", 0)),
+                            "malicious":       float(da.get("malicious", 0)),
+                            "imbalance_ratio": float(da.get("imbalance_ratio", 0)),
+                        })
+                if "taxonomy_inventory" in sections:
+                    ti_path = reports_dir / "taxonomy_inventory.json"
+                    if ti_path.exists():
+                        import json as _json
+                        ti = _json.loads(ti_path.read_text())
+                        log_metrics_dict({
+                            "n_missing_classes":  float(len(ti.get("missing_classes", []))),
+                            "n_low_count_classes": float(len(ti.get("low_count_classes", {}))),
+                        })
+                if "length_distribution" in sections:
+                    ld_path = reports_dir / "length_distribution.json"
+                    if ld_path.exists():
+                        import json as _json
+                        ld = _json.loads(ld_path.read_text())
+                        log_metrics_dict({
+                            "pct_requests_over_limit": float(ld.get("pct_requests_over_limit_approx", 0)),
+                        })
+                for fname in ["dataset_analysis.json", "taxonomy_inventory.json",
+                               "taxonomy_coverage.json", "length_distribution.json"]:
+                    p = reports_dir / fname
+                    if p.exists():
+                        mlflow.log_artifact(str(p))
+            if "datasheet" in sections:
+                ds_path = reports_dir / "datasheet.json"
+                if ds_path.exists():
+                    mlflow.log_artifact(str(ds_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(

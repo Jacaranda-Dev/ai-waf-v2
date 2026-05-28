@@ -316,6 +316,24 @@ def run(args: argparse.Namespace) -> None:
     sp = Path(cfg.paths.reports) / "metrics" / "benign_enrichment.json"
     sp.write_text(json.dumps(stats, indent=2))
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="03_benign_enrichment"):
+            mlflow.log_params({
+                "replay_enabled": replay_on,
+                "pcap_dir":       str(pcap_dir) if pcap_dir else "none",
+                "n_aligned_target": n_aligned,
+            })
+            log_metrics_dict({
+                "n_pcap_flows":     float(len(flows)),
+                "n_aligned_benign": float(len(records)),
+            })
+            mlflow.log_artifact(str(sp))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

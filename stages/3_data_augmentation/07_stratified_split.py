@@ -307,6 +307,29 @@ def run(args: argparse.Namespace) -> None:
     if warnings:
         log.warning(f"Imbalance warnings for splits: {warnings}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="07_stratified_split"):
+            mlflow.log_params({
+                "leakage_threshold": LEAKAGE_THRESHOLD,
+                "stratification_key": "label × attack_class × source_bucket",
+                "global_imbalance_ratio": global_ratio,
+                "n_imbalance_warnings": len(warnings),
+            })
+            metrics: dict[str, float] = {"global_imbalance_ratio": float(global_ratio)}
+            for split_name, info in health.items():
+                if isinstance(info, dict) and "n_total" in info:
+                    metrics[f"{split_name}_n_total"]   = float(info["n_total"])
+                    metrics[f"{split_name}_n_benign"]  = float(info["n_benign"])
+                    metrics[f"{split_name}_n_malicious"] = float(info["n_malicious"])
+                    metrics[f"{split_name}_imbalance"] = float(info["imbalance_ratio"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(stats_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

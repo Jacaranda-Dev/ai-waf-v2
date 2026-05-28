@@ -225,6 +225,30 @@ def run(args: argparse.Namespace) -> None:
     log.info(f"  Sections included: {len(sections)}/{len(SECTION_MANIFEST)}")
     log.info(f"  Models in summary: {list(summary.keys())}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="15_generate_report"):
+            mlflow.log_params({
+                "sections_found":   len(sections),
+                "sections_total":   len(SECTION_MANIFEST),
+                "models_in_summary": len(summary),
+            })
+            metrics: dict[str, float] = {
+                "n_sections_found":   float(len(sections)),
+                "n_sections_missing": float(len(SECTION_MANIFEST) - len(sections)),
+            }
+            for model_name, model_summary in summary.items():
+                for key in ("f1", "auc_pr", "fpr", "recall"):
+                    val = model_summary.get(key)
+                    if isinstance(val, (int, float)):
+                        metrics[f"{model_name}_{key}"] = float(val)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

@@ -187,6 +187,30 @@ def run(args: argparse.Namespace) -> None:
     out_path.write_text(json.dumps(result_b, indent=2))
     log.info(f"Track B stats saved to {out_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="03_train_custom_bpe"):
+            mlflow.log_params({
+                "vocab_size":        tok_cfg.vocab_size,
+                "corpus_sample_size": CORPUS_SAMPLE_SIZE,
+                "eval_sample_size":  EVAL_SAMPLE_SIZE,
+                "seq_len":           cfg.tokenizer.seq_len,
+                "output_dir":        tok_cfg.output_dir,
+            })
+            log_metrics_dict({
+                "oov_rate":           float(result_b["oov_rate"]),
+                "fertility":          float(result_b["fertility"]),
+                "truncation_rate":    float(result_b["truncation_rate"]),
+                "avg_seq_len":        float(result_b["avg_seq_len"]),
+                "subword_char_ratio": float(result_b["subword_char_ratio"]),
+                "actual_vocab_size":  float(tokenizer_b.vocab_size),
+            })
+            mlflow.log_artifact(str(out_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train Track B BPE tokenizer.")

@@ -222,6 +222,29 @@ def run(args: argparse.Namespace) -> None:
     }, indent=2))
     log.info(f"Canary report saved to {out_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="04_student_canary"):
+            mlflow.log_params({
+                "threshold":       threshold,
+                "min_recall_slo":  min_recall,
+                "n_families":      len(results),
+                "n_failed_families": len(failed_fams),
+                "canary_source":   "builtin" if (args.canary_dir is None) else "disk",
+            })
+            metrics: dict[str, float] = {
+                "overall_recall": float(overall_recall),
+                "slo_passed":     float(len(failed_fams) == 0),
+            }
+            for fam, info in results.items():
+                metrics[f"recall_{fam}"] = float(info["recall"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     # ── CI/CD gate ────────────────────────────────
     if failed_fams:
         log.error(

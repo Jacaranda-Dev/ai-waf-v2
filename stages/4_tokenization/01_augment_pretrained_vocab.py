@@ -84,6 +84,25 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(stats, indent=2))
     log.info(f"Track A augmentation report saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="01_augment_pretrained_vocab"):
+            mlflow.log_params({
+                "base_model":     tok_a.base_model,
+                "n_http_tokens":  len(tok_a.http_tokens),
+            })
+            log_metrics_dict({
+                "n_tokens_added":    float(n_added),
+                "new_vocab_size":    float(len(tokenizer)),
+                "n_shadowed":        float(shadow_summary.get("n_shadowed", 0)),
+                "total_checked":     float(shadow_summary.get("total_checked", 0)),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Augment BERT vocab with HTTP tokens (Track A).")

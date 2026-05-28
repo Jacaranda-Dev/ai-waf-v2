@@ -380,6 +380,33 @@ def run(args: argparse.Namespace) -> None:
     baselines_path.write_text(json.dumps(existing, indent=2))
     log.info(f"\nCRS results (all PL) saved to {baselines_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="02_modsecurity_crs"):
+            mlflow.log_params({
+                "paranoia_levels":      pl_range,
+                "anomaly_threshold":    threshold,
+                "n_rules_total":        len(CRS_RULES),
+                "n_test_samples":       len(raws),
+            })
+            mlflow_metrics: dict[str, float] = {}
+            for pl in pl_range:
+                key = f"modsecurity_crs_pl{pl}"
+                if key in existing:
+                    m = existing[key].get("overall", {})
+                    mlflow_metrics[f"pl{pl}_f1"]     = float(m.get("f1", 0))
+                    mlflow_metrics[f"pl{pl}_fpr"]    = float(m.get("fpr", 0))
+                    mlflow_metrics[f"pl{pl}_recall"] = float(m.get("recall", 0))
+                    mlflow_metrics[f"pl{pl}_auc_pr"] = float(m.get("auc_pr", 0))
+                    lat = existing[key].get("throughput", {})
+                    mlflow_metrics[f"pl{pl}_rps"]    = float(lat.get("throughput_rps", 0))
+            log_metrics_dict(mlflow_metrics)
+            mlflow.log_artifact(str(baselines_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     # Print paper-ready comparison table to log
     if len(pl_range) > 1:
         log.info("\n── CRS Paranoia Level Comparison (for paper Table) ──")

@@ -105,6 +105,27 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Track A evaluation report saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="02_measure_oov_track_a"):
+            mlflow.log_params({
+                "eval_sample_size": EVAL_SAMPLE_SIZE,
+                "seq_len":          cfg.tokenizer.seq_len,
+                "tokenizer_dir":    str(track_a_dir),
+            })
+            log_metrics_dict({
+                "oov_rate":           float(result["oov_rate"]),
+                "fertility":          float(result["fertility"]),
+                "truncation_rate":    float(result["truncation_rate"]),
+                "avg_seq_len":        float(result["avg_seq_len"]),
+                "subword_char_ratio": float(result["subword_char_ratio"]),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate Track A tokenizer metrics.")

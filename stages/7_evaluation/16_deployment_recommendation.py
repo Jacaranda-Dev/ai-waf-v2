@@ -203,6 +203,43 @@ def run(args: argparse.Namespace) -> None:
     log.info(f"  {winner_reason}")
     log.info(f"\nDeployment recommendation saved to {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="16_deployment_recommendation"):
+            mlflow.log_params({
+                "w_efficacy":          W_EFFICACY,
+                "w_latency":           W_LATENCY,
+                "w_robustness":        W_ROBUSTNESS,
+                "slo_p99_ms":          slo_p99_ms,
+                "slo_rps":             slo_rps,
+                "selected_model":      winner["model"],
+                "n_models_ranked":     len(scored),
+            })
+            metrics: dict[str, float] = {
+                "winner_composite_score": float(winner["composite_score"]),
+            }
+            if runner_up:
+                metrics["runner_up_composite_score"] = float(runner_up["composite_score"])
+                metrics["winner_runner_up_gap"] = float(
+                    winner["composite_score"] - runner_up["composite_score"]
+                )
+            cs = winner["component_scores"]
+            if cs.get("efficacy_raw") is not None:
+                metrics["winner_auc_pr"]        = float(cs["efficacy_raw"])
+            if cs.get("latency_p99_ms") is not None:
+                metrics["winner_p99_ms"]        = float(cs["latency_p99_ms"])
+            if cs.get("mean_evasion_rate") is not None:
+                metrics["winner_evasion_rate"]  = float(cs["mean_evasion_rate"])
+            slo_checks = winner["slo_checks"]
+            metrics["winner_p99_ok"]  = float(slo_checks.get("p99_ok", False))
+            metrics["winner_rps_ok"]  = float(slo_checks.get("rps_ok", False))
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def _generate_reasoning(
     winner: dict[str, Any],

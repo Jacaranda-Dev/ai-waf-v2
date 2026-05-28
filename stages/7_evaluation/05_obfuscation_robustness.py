@@ -51,6 +51,33 @@ def run(args):
     out = Path(cfg.paths.reports)/"metrics"/"obfuscation_robustness.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(chained_results, indent=2))
+    log.info(f"Obfuscation robustness saved to {out}")
+
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="05_obfuscation_robustness"):
+            mlflow.log_params({
+                "n_records_cap":   1000,
+                "n_chains_tested": len(chained_results),
+            })
+            metrics: dict[str, float] = {}
+            if chained_results:
+                metrics["mean_detection_rate"] = float(
+                    sum(r["detection_rate"] for r in chained_results) / len(chained_results)
+                )
+                metrics["mean_evasion_rate"] = float(
+                    sum(r["evasion_rate"] for r in chained_results) / len(chained_results)
+                )
+                for r in chained_results:
+                    safe_chain = r["chain"].replace("+", "_")
+                    metrics[f"detection_{safe_chain}"] = float(r["detection_rate"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 def parse_args():
     p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
 if __name__ == "__main__": run(parse_args())

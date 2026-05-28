@@ -1,7 +1,7 @@
 """
-stages/1_data_acquisition_and_curation/04_stratified_split.py
+stages/2_baselines/00_stratified_split.py
 ------------------------------------
-Stage 1.8 — Stratified train / val / test / adversarial / canary split.
+Stage 2.0 — Stratified train / val / test / adversarial / canary split.
 
 Stratifies by (label × attack_class) so every split has proportional
 representation of each attack type and class balance.
@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 from sklearn.model_selection import train_test_split
 
@@ -118,7 +119,7 @@ def run(args: argparse.Namespace) -> None:
 
         out_path = splits_dir / f"{split_name}.parquet"
         pq.write_table(
-            pq.Table.from_pandas(split_df, preserve_index=False),
+            pa.Table.from_pandas(split_df, preserve_index=False),
             out_path,
             compression="snappy",
         )
@@ -149,6 +150,30 @@ def run(args: argparse.Namespace) -> None:
     stats_path.write_text(json.dumps({**split_stats, "_meta": stats_meta}, indent=2))
     log.info(f"Split stats saved to {stats_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="00_stratified_split"):
+            mlflow.log_params({
+                "split_train":      scfg.train,
+                "split_val":        scfg.val,
+                "split_test":       scfg.test,
+                "split_adversarial": scfg.adversarial,
+                "split_canary":     scfg.canary,
+                "fallback_splits":  fallback_splits,
+            })
+            metrics: dict[str, float] = {}
+            for split_name, info in split_stats.items():
+                metrics[f"{split_name}_n_total"]    = float(info["n_total"])
+                metrics[f"{split_name}_n_benign"]   = float(info["n_benign"])
+                metrics[f"{split_name}_n_malicious"] = float(info["n_malicious"])
+                metrics[f"{split_name}_imbalance"]  = float(info["imbalance_ratio"])
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(stats_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def _stratified_split(
     df: pd.DataFrame,
@@ -177,9 +202,6 @@ def _stratified_split(
         log.warning("Stratified split failed — falling back to random split")
         main, held = train_test_split(df, test_size=test_size, random_state=seed)
         return main.copy(), held.copy(), True    # ← fallback triggered
-
-
-    return main.copy(), held.copy()
 
 
 def parse_args() -> argparse.Namespace:

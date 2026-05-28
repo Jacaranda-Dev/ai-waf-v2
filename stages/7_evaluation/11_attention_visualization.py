@@ -167,6 +167,26 @@ def run(args: argparse.Namespace) -> None:
     log.info(f"Attention visualization data saved to {out}")
     log.info(f"Render with: python -c \"import json,matplotlib.pyplot as plt; ...\"")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="11_attention_visualization"):
+            mlflow.log_params({
+                "samples_per_class": SAMPLES_PER_CLASS,
+                "n_attack_classes":  len(attack_classes[:6]),
+                "n_samples_total":   len(results),
+            })
+            n_correct = sum(1 for r in results if r.get("pred") == r.get("label"))
+            log_metrics_dict({
+                "n_samples":         float(len(results)),
+                "n_correct_pred":    float(n_correct),
+                "accuracy":          float(n_correct / max(1, len(results))),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args():
     p = argparse.ArgumentParser()

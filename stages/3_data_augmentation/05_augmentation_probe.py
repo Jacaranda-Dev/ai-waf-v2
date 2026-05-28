@@ -286,6 +286,27 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Probe results written → {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="05_augmentation_probe"):
+            mlflow.log_params({
+                "probe_model":    results["probe_model"],
+                "n_stop_signals": len(results["stop_signals"]),
+                "stop_classes":   results["stop_signals"],
+            })
+            log_metrics_dict({
+                "real_only_auc_pr":  float(m_real["auc_pr"]),
+                "real_only_f1":      float(m_real["f1"]),
+                "real_aug_auc_pr":   float(m_full["auc_pr"]),
+                "real_aug_f1":       float(m_full["f1"]),
+                "delta_auc_pr":      float(delta),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
     if results["stop_signals"]:
         log.warning(
             f"STOP_AUGMENTATION signals for: {results['stop_signals']} "

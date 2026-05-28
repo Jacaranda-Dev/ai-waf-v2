@@ -205,6 +205,28 @@ def run(args: argparse.Namespace) -> None:
 
     log.info(f"Student threshold saved to {out_path}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="03_student_calibrate"):
+            mlflow.log_params({
+                "max_fpr":          max_fpr,
+                "n_sweep_steps":    400,
+                "n_val_samples":    int(len(scores)),
+            })
+            log_metrics_dict({
+                "calibrated_threshold": float(best["threshold"]),
+                "f1_at_threshold":      float(best["f1"]),
+                "precision":            float(best["precision"]),
+                "recall":               float(best["recall"]),
+                "fpr":                  float(best["fpr"]),
+                "slo_satisfied":        float(best["fpr"] <= max_fpr),
+            })
+            mlflow.log_artifact(str(out_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Calibrate student classification threshold.")

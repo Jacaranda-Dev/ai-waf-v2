@@ -217,6 +217,30 @@ def run(args: argparse.Namespace) -> None:
     out.write_text(json.dumps(result, indent=2))
     log.info(f"\nInventory + distribution shift report saved → {out}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="06_taxonomy_inventory"):
+            mlflow.log_params({
+                "n_required_classes": len(result["required_classes"]),
+                "n_missing_classes":  len(result["missing_classes"]),
+                "n_low_count":        len(result["low_count_classes"]),
+                "min_samples_per_class": MIN_SAMPLES_PER_CLASS,
+            })
+            log_metrics_dict({
+                "jsd":              float(jsd),
+                "gini_base":        float(gini_base),
+                "gini_combined":    float(gini_combined),
+                "gini_delta":       float(gini_combined - gini_base),
+                "base_benign":      float(base_benign),
+                "base_malicious":   float(base_malicious),
+                "aug_total":        float(sum(aug_class_counts.values())),
+            })
+            mlflow.log_artifact(str(out))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()

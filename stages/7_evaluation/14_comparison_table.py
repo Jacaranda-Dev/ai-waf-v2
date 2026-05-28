@@ -222,6 +222,28 @@ def run(args: argparse.Namespace) -> None:
     display_cols = [c for c in key_cols if c in df.columns]
     log.info(f"\n{df[display_cols].to_string(index=False)}")
 
+    try:
+        import mlflow
+        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+        init_experiment(cfg)
+        with mlflow.start_run(run_name="14_comparison_table"):
+            mlflow.log_params({
+                "n_models_in_table": len(rows),
+                "top_model":         df.iloc[0]["Model"] if len(df) > 0 else "N/A",
+            })
+            metrics: dict[str, float] = {}
+            for _, row in df.iterrows():
+                model_label = str(row["Model"]).replace(" ", "_").replace("[", "").replace("]", "")
+                for col in ("F1", "AUC-PR", "FPR", "p99_ms_bs1", "mean_evasion_rate"):
+                    val = row.get(col)
+                    if val is not None and isinstance(val, (int, float)):
+                        metrics[f"{model_label}_{col.replace('-','_')}"] = float(val)
+            log_metrics_dict(metrics)
+            mlflow.log_artifact(str(json_path))
+            mlflow.log_artifact(str(csv_path))
+    except Exception as exc:
+        log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
