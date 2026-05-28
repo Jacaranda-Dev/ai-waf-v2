@@ -86,7 +86,7 @@ def _load_corpus(cfg) -> pd.DataFrame:
 
     raise FileNotFoundError(
         f"No corpus found. Expected one of: {[str(p) for p in candidates]}. "
-        "Run Stage 01 (acquire + normalise) and Stage 03 (dedup) first."
+        "Run Stage 01 (acquire + Normalize) and Stage 03 (dedup) first."
     )
 
 
@@ -232,7 +232,7 @@ def _report_taxonomy_coverage(
     all_classes = required | present
 
     result: dict[str, Any] = {
-        # Normalise so every source row contains every known class (0 if absent)
+        # Normalize so every source row contains every known class (0 if absent)
         "coverage_matrix": {
             src: {cls: int(matrix[src].get(cls, 0)) for cls in sorted(all_classes)}
             for src in sorted(matrix)
@@ -304,7 +304,7 @@ def _report_length_distribution(
 
 def _report_datasheet(cfg, reports_dir: Path) -> dict[str, Any]:
     """
-    Write a Gebru et al. (2018) datasheet stub for the WAF-AI corpus.
+    Write a Gebru et al. (2018) datasheet stub for the ai-waf-v2 corpus.
 
     This section does not require the DataFrame — it reads only from config.
     It is included here so all curation metadata is produced in one invocation.
@@ -312,11 +312,11 @@ def _report_datasheet(cfg, reports_dir: Path) -> dict[str, Any]:
     log.info("Section: datasheet")
 
     datasheet: dict[str, Any] = {
-        "dataset_name": "WAF-AI HTTP Classification Dataset",
+        "dataset_name": "ai-waf-v2 HTTP Classification Dataset",
         "version":      cfg.project.version,
         "motivation": {
             "purpose":  "Train and evaluate transformer-based WAF classifiers",
-            "creators": "WAF-AI research project",
+            "creators": "ai-waf-v2 research project",
             "funding":  "NSF CyberAI / SFS program",
         },
         "composition": {

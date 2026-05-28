@@ -274,7 +274,7 @@ def _http_features(raw: str) -> list[float]:
         float(bool(_FIELD_PATTERNS["has_xss_in_ua"].search(raw))),
         float(bool(_FIELD_PATTERNS["has_path_traversal"].search(raw))),
         float(bool(_FIELD_PATTERNS["has_encoded_payload"].search(raw))),
-        float(min(len(raw), 10_000) / 10_000),     # normalised request length
+        float(min(len(raw), 10_000) / 10_000),     # Normalized request length
         float(n_params > 10),                       # unusually many query params
     ]
     return vals
@@ -564,7 +564,7 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
-    splits_dir  = Path(cfg.paths.data_splits)
+    splits_dir  = Path(args.split_dir) if args.split_dir else Path(cfg.paths.data_splits)
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -589,8 +589,9 @@ def run(args: argparse.Namespace) -> None:
 
     slos = _load_slos(reports_dir)
 
-    baselines_path = reports_dir / "baselines.json"
+    baselines_path = reports_dir / args.out_file
     existing = json.loads(baselines_path.read_text()) if baselines_path.exists() else {}
+    phase = args.phase
 
     # ── Baseline A: Aho-Corasick Fast-Match ──────────────────────────────────
     log.info("\n" + "═" * 60)
@@ -598,6 +599,7 @@ def run(args: argparse.Namespace) -> None:
     log.info("═" * 60)
     result_ac, m_ac, lat_ac = _run_fast_match(X_test_raw, y_test.tolist(), test_classes)
     result_ac["slo_verdicts"] = _audit_slos("fast_match", m_ac, lat_ac, slos) if slos else {}
+    result_ac["phase"] = phase
     existing["aho_corasick_fast_match"] = result_ac
 
     # ── Build shared hashed n-gram vectorizer (fit once on train) ─────────────
@@ -640,6 +642,7 @@ def run(args: argparse.Namespace) -> None:
         model_key="xgboost_hashed_ngram_http",
     )
     result_xgb["slo_verdicts"] = _audit_slos("xgboost+http", m_xgb, lat_xgb, slos) if slos else {}
+    result_xgb["phase"] = phase
     existing["xgboost_hashed_ngram_http"] = result_xgb
 
     # ── Baseline C: Ablation — XGBoost without HTTP features ─────────────────
@@ -654,6 +657,7 @@ def run(args: argparse.Namespace) -> None:
             model_key="xgboost_hashed_ngram_ablation",
         )
         result_abl["slo_verdicts"] = _audit_slos("xgboost_ablation", m_abl, lat_abl, slos) if slos else {}
+        result_abl["phase"] = phase
         existing["xgboost_hashed_ngram_ablation"] = result_abl
 
         # Log the feature-engineering lift for the paper
@@ -677,11 +681,12 @@ def run(args: argparse.Namespace) -> None:
                 _audit_slos("lightgbm", result_lgbm["overall"], result_lgbm["latency"], slos)
                 if slos else {}
             )
+            result_lgbm["phase"] = phase
             existing["lightgbm_hashed_ngram"] = result_lgbm
 
     # ── Write results ─────────────────────────────────────────────────────────
     baselines_path.write_text(json.dumps(existing, indent=2))
-    log.info(f"\nAll classical ML baselines saved to {baselines_path}")
+    log.info(f"\nAll classical ML baselines [{phase}] saved to {baselines_path}")
 
     # Summary table for the paper
     log.info("\n── Classical ML Summary (for paper Table) ──")
@@ -715,9 +720,18 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--config",       default="config/pipeline.yaml")
     p.add_argument("--also-lgbm",    action="store_true",
-                   help="Also run LightGBM (appended to baselines.json, not in default run)")
+                   help="Also run LightGBM (appended to output file, not in default run)")
     p.add_argument("--no-ablation",  action="store_true",
                    help="Skip the HTTP-feature ablation run (saves ~50%% training time)")
+    p.add_argument("--split-dir",    default=None, metavar="DIR",
+                   help="Directory containing train/val/test.parquet "
+                        "(default: cfg.paths.data_splits)")
+    p.add_argument("--out-file",     default="baselines.json", metavar="FILE",
+                   help="Output filename within reports/metrics/ (default: baselines.json)")
+    p.add_argument("--phase",        default="pre_aug", choices=["pre_aug", "post_aug"],
+                   help="Pipeline phase tag written into each result entry "
+                        "(pre_aug = before augmentation; post_aug = after augmentation). "
+                        "Default: pre_aug")
     return p.parse_args()
 
 

@@ -1,7 +1,7 @@
 """
 tests/test_all.py
 -----------------
-Unit tests for the WAF-AI core library.
+Unit tests for the ai-waf-v2 core library.
 
 Run:
     pytest tests/ -v

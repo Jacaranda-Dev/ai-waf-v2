@@ -11,7 +11,7 @@ The combined distillation loss is:
 
 where:
     T          = temperature (default 4.0 — softens teacher distribution)
-    T²         = scale factor that normalises the KL term so it has
+    T²         = scale factor that Normalizes the KL term so it has
                  the same magnitude as CE regardless of T
     α_hard     = 0.3  (hard label weight)
     α_soft     = 0.7  (soft label weight)

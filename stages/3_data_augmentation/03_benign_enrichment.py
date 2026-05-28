@@ -154,16 +154,16 @@ class TrafficDistribution:
             if "authorization" in h: n_auth += 1
             if "referer" in h:       n_ref  += 1
 
-        def _normalise(counter: collections.Counter) -> dict:
+        def _Normalize(counter: collections.Counter) -> dict:
             total = sum(counter.values()) or 1
             return {k: round(v / total, 6) for k, v in counter.most_common(50)}
 
         n = len(flows) or 1
-        d.user_agents    = _normalise(ua_counts)
-        d.methods        = _normalise(meth_counts)
+        d.user_agents    = _Normalize(ua_counts)
+        d.methods        = _Normalize(meth_counts)
         d.path_depths    = {k: round(v / n, 6) for k, v in depth_counts.most_common(10)}
-        d.content_types  = _normalise(ct_counts)
-        d.accept_headers = _normalise(accept_counts)
+        d.content_types  = _Normalize(ct_counts)
+        d.accept_headers = _Normalize(accept_counts)
         d.has_auth       = round(n_auth / n, 4)
         d.has_referer    = round(n_ref  / n, 4)
         return d

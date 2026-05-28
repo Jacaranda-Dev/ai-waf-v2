@@ -49,7 +49,7 @@ def _kl_div(p: dict[str, float], q: dict[str, float]) -> float:
 
 def jensen_shannon_divergence(p: dict[str, float], q: dict[str, float]) -> float:
     """
-    JSD(P || Q) ∈ [0, 1]  (using log base 2, so result is in bits normalised to 1).
+    JSD(P || Q) ∈ [0, 1]  (using log base 2, so result is in bits Normalized to 1).
     JSD = 0 → distributions identical.
     JSD = 1 → distributions completely disjoint.
     """
@@ -60,7 +60,7 @@ def jensen_shannon_divergence(p: dict[str, float], q: dict[str, float]) -> float
     q_norm = {k: q.get(k, 0) / total_q for k in keys}
     m = {k: (p_norm[k] + q_norm[k]) / 2.0 for k in keys}
     jsd = 0.5 * _kl_div(p_norm, m) + 0.5 * _kl_div(q_norm, m)
-    # Normalise to [0, 1] (log2 basis → divide by log(2) since we used natural log)
+    # Normalize to [0, 1] (log2 basis → divide by log(2) since we used natural log)
     return round(min(1.0, jsd / math.log(2)), 6)
 
 
@@ -99,7 +99,7 @@ def run(args: argparse.Namespace) -> None:
     ]
     base_path = next((p for p in base_paths if p.exists()), None)
     if not base_path:
-        log.error("No normalised base data found — run Stage 1 first")
+        log.error("No Normalized base data found — run Stage 1 first")
         return
 
     base_table   = pq.read_table(base_path, columns=["label", "attack_class", "source"])

@@ -1,7 +1,7 @@
 """
 stages/1_data_acquisition_and_curation/01_acquire_and_normalize.py
 ------------------------------------------------------------------
-Stage 1 — Download, verify, convert, adapt, normalise, and write
+Stage 1 — Download, verify, convert, adapt, Normalize, and write
 canonical Parquet in a single streaming pass.
 
 
@@ -16,7 +16,7 @@ Pipeline per dataset
   3. Extract        — ZIP / tar.gz / flat file → extract_dir (if necessary)
   4. Convert        — extract_dir → data/raw/{name}.csv   (CONVERTER_REGISTRY)
   5. Adapt          — CSV rows → Iterator[HttpRecord]      (ADAPTER_REGISTRY)
-  6. Normalise      — fix nulls, canonicalise attack_class, enforce binary label
+  6. Normalize      — fix nulls, canonicalise attack_class, enforce binary label
   7. Stream-write   — canonical HttpRecords → data/normalized/{name}.parquet
   8. Merge          — all per-dataset Parquets → data/normalized/all_datasets.parquet
 
@@ -62,6 +62,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
+from urllib.parse import urlparse
 
 import kagglehub
 import pandas as pd
@@ -132,7 +133,7 @@ def _canonical_class(raw: str) -> str:
     return CLASS_ALIASES.get(str(raw).lower().strip(), str(raw).lower().strip())
 
 
-def _normalise_record(record: HttpRecord) -> HttpRecord | None:
+def _Normalize_record(record: HttpRecord) -> HttpRecord | None:
     """
     Apply schema-normalization rules to a single HttpRecord in-place.
 
@@ -143,7 +144,7 @@ def _normalise_record(record: HttpRecord) -> HttpRecord | None:
       • Rebuild raw HTTP if it is missing (identical logic to the old script).
       • Drop the record entirely if raw is still empty after rebuild.
 
-    Returns the normalised record, or None if the record should be dropped.
+    Returns the Normalized record, or None if the record should be dropped.
     """
     # ── Null / whitespace cleanup ────────────────────────────────────────────
     record.method       = (record.method       or "GET").strip() or "GET"
@@ -185,13 +186,13 @@ def _normalized_record_iter(
 
     This is the key integration point: adapters (ADAPTER_REGISTRY) are
     unchanged — they still yield HttpRecords as before — but every record
-    passes through _normalise_record before it reaches the Parquet writer.
+    passes through _Normalize_record before it reaches the Parquet writer.
     
     """
     for record in raw_iter:
-        normalised = _normalise_record(record)
-        if normalised is not None:
-            yield normalised
+        Normalized = _Normalize_record(record)
+        if Normalized is not None:
+            yield Normalized
 
 
 # ─────────────────────────────────────────────────────────
@@ -239,9 +240,13 @@ def _parse_raw_http(
     method = path = query_string = ""
     m = re.match(r"^(\w+)\s+(\S+)(?:\s+HTTP/[\d.]+)?$", lines[0].strip())
     if m:
-        method = m.group(1).upper()
-        url    = m.group(2)
-        path, query_string = url.split("?", 1) if "?" in url else (url, "")
+        method       = m.group(1).upper()
+        url          = m.group(2)
+        # urlparse handles both absolute (http://host/path?qs) and relative
+        # (/path?qs) URLs, stripping scheme+host from CSIC 2010's request lines.
+        _parsed      = urlparse(url)
+        path         = _parsed.path or "/"
+        query_string = _parsed.query
 
     headers:    dict[str, str] = {}
     body_lines: list[str]      = []
@@ -275,7 +280,7 @@ def _parse_raw_http(
 # ─────────────────────────────────────────────────────────
 
 def _find_label_col(df: pd.DataFrame) -> str:
-    for candidate in ("label", "Label", "class", "Class", "target", "Target"):
+    for candidate in ("label", "Label", "classification", "class", "Class", "target", "Target"):
         if candidate in df.columns:
             return candidate
     raise ValueError(f"No label column found. Columns: {list(df.columns)}")
@@ -292,7 +297,7 @@ def _extract_attack_class(df: pd.DataFrame, labels: list[int]) -> list[str]:
     Vectorised attack_class extraction.
 
     Note: raw values are returned here unchanged; _canonical_class is
-    applied later inside _normalise_record so there is exactly one
+    applied later inside _Normalize_record so there is exactly one
     canonicalisation path regardless of which adapter produced the record.
     """
     if "attack_class" in df.columns:
@@ -471,15 +476,50 @@ def _adapt_csic_v1(
             except Exception as e:
                 log.debug(f"Parse error ({source_name}): {e}")
     else:
-        methods = df.get("Method", pd.Series(["GET"] * len(df))).fillna("GET").astype(str).str.upper().tolist()
-        urls    = df.get("URL",    pd.Series(["/"]   * len(df))).fillna("/").astype(str).tolist()
-        bodies  = df.get("Payload",pd.Series([""]   * len(df))).fillna("").astype(str).tolist()
+        # CSIC 2010 Kaggle delivery: one column per header field.
+        # 'lenght' is a typo in the original dataset for 'Content-Length'.
+        _HEADER_COL_MAP = {
+            "User-Agent":      "User-Agent",
+            "Pragma":          "Pragma",
+            "Cache-Control":   "Cache-Control",
+            "Accept":          "Accept",
+            "Accept-encoding": "Accept-Encoding",
+            "Accept-charset":  "Accept-Charset",
+            "language":        "Accept-Language",
+            "host":            "Host",
+            "cookie":          "Cookie",
+            "content-type":    "Content-Type",
+            "connection":      "Connection",
+            "lenght":          "Content-Length",
+        }
 
-        for method, url, body, lbl, ac in zip(methods, urls, bodies, labels, attack_classes):
-            path, query = url.split("?", 1) if "?" in url else (url, "")
+        methods = df.get("Method",  pd.Series(["GET"] * len(df))).fillna("GET").astype(str).str.upper().tolist()
+        urls    = df.get("URL",     pd.Series(["/"]   * len(df))).fillna("/").astype(str).tolist()
+        bodies  = df.get("content", pd.Series([""]   * len(df))).fillna("").astype(str).tolist()
+
+        # Pre-extract header columns as lists to avoid per-row iloc overhead
+        header_cols: dict[str, list[str]] = {}
+        for col, hdr in _HEADER_COL_MAP.items():
+            if col in df.columns:
+                header_cols[hdr] = df[col].fillna("").astype(str).tolist()
+
+        for i, (method, url, body, lbl, ac) in enumerate(zip(methods, urls, bodies, labels, attack_classes)):
+            _parsed = urlparse(url)
+            path    = _parsed.path or "/"
+            query   = _parsed.query
+            headers: dict[str, str] = {}
+            for hdr, vals in header_cols.items():
+                val = vals[i].strip()
+                if not val or val.lower() == "nan":
+                    continue
+                prefix = hdr + ": "
+                if val.lower().startswith(prefix.lower()):
+                    val = val[len(prefix):]
+                headers[hdr] = val
             try:
                 yield HttpRecord(
                     method=method, path=path, query_string=query,
+                    headers=json.dumps(headers),
                     body=body, label=lbl, attack_class=ac, source=source_name,
                 ).build_raw()
             except Exception as e:
@@ -908,7 +948,7 @@ def run(args: argparse.Namespace) -> None:
 
     log.info(f"Processing {len(specs)} dataset(s): {[s.name for s in specs]}")
 
-    # ── Per-dataset: acquire → adapt → normalise → write ─────────────────────
+    # ── Per-dataset: acquire → adapt → Normalize → write ─────────────────────
     manifest:          list[dict]      = []
     per_dataset_stats: dict[str, dict] = {}
     all_parquet_paths: list[Path]      = []
@@ -932,8 +972,8 @@ def run(args: argparse.Namespace) -> None:
             manifest.append({"name": spec.name, "status": "failed", "error": str(exc)})
             continue
 
-        # Phase 2 — Adapt + Normalise + Write (single streaming pass)
-        log.info(f"{' '*8}==== Phase 2/2 — Adapt + Normalise + Write ")
+        # Phase 2 — Adapt + Normalize + Write (single streaming pass)
+        log.info(f"{' '*8}==== Phase 2/2 — Adapt + Normalize + Write ")
         csv_path    = raw_dir / spec.output_csv
         parquet_out = normalized_dir / f"{spec.name}.parquet"
 
@@ -1087,7 +1127,7 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Stage 1 — Download, ingest, and normalise WAF datasets",
+        description="Stage 1 — Download, ingest, and Normalize WAF datasets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--config",       default="config/pipeline.yaml")

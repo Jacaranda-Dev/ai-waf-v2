@@ -321,7 +321,7 @@ class EvaluationConfig(BaseModel):
 
 class MLflowConfig(BaseModel):
     tracking_uri:    str            = "sqlite:///mlruns/mlflow.db"
-    experiment_name: str            = "waf-ai"
+    experiment_name: str            = "ai-waf-v2"
     tags:            dict[str, str] = Field(default_factory=dict)
 
 

@@ -6,9 +6,9 @@ Stage 7.8 — Deployment Decision Matrix.
 Critique §6 — Implements the weighted scoring algorithm:
 
     score(model) =
-        0.5 × normalised(AUC-PR)
-      + 0.3 × normalised(latency_score)    # 1 if p99 ≤ SLO, degrades linearly above
-      + 0.2 × normalised(1 - mean_evasion_rate)
+        0.5 × Normalized(AUC-PR)
+      + 0.3 × Normalized(latency_score)    # 1 if p99 ≤ SLO, degrades linearly above
+      + 0.2 × Normalized(1 - mean_evasion_rate)
 
 Reads from:
   - master_comparison_table.json   (aggregated by 14_comparison_table.py)
@@ -40,8 +40,8 @@ W_LATENCY    = 0.3   # latency score (p99 vs SLO)
 W_ROBUSTNESS = 0.2   # 1 − mean_evasion_rate
 
 
-def _normalise(values: list[float | None]) -> list[float]:
-    """Min-max normalise a list, treating None as 0."""
+def _Normalize(values: list[float | None]) -> list[float]:
+    """Min-max Normalize a list, treating None as 0."""
     cleaned = [v if v is not None else 0.0 for v in values]
     lo, hi  = min(cleaned), max(cleaned)
     if hi == lo:
@@ -101,13 +101,13 @@ def run(args: argparse.Namespace) -> None:
         for e in evasions
     ]
 
-    # Latency score per model (not normalised — already in [0,1])
+    # Latency score per model (not Normalized — already in [0,1])
     lat_scores_raw = [_latency_score(p99, slo_p99_ms) for p99 in p99s]
 
-    # Normalise AUC-PR and robustness
-    norm_auc_pr     = _normalise(auc_prs)
-    norm_latency    = _normalise(lat_scores_raw)   # relative ranking on top of [0,1]
-    norm_robustness = _normalise(robustness)
+    # Normalize AUC-PR and robustness
+    norm_auc_pr     = _Normalize(auc_prs)
+    norm_latency    = _Normalize(lat_scores_raw)   # relative ranking on top of [0,1]
+    norm_robustness = _Normalize(robustness)
 
     # ── Weighted composite score ──────────────────────────────────────────────
     scored: list[dict[str, Any]] = []

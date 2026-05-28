@@ -60,7 +60,7 @@ class ClassificationHead(nn.Module):
 
         Returns
         -------
-        logits : (B, num_labels)  — raw unnormalised scores
+        logits : (B, num_labels)  — raw unNormalized scores
         """
         return self.linear(self.dropout(cls_hidden))
 

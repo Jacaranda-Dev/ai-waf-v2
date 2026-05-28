@@ -278,7 +278,7 @@ evaluation:
 # ─── MLFLOW ──────────────────────────────────────────
 mlflow:
   tracking_uri: "sqlite:///mlruns/mlflow.db"
-  experiment_name: "waf-ai"
+  experiment_name: "ai-waf-v2"
   tags:
-    project: "waf-ai"
+    project: "ai-waf-v2"
     framework: "pytorch"

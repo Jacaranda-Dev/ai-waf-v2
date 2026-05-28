@@ -56,6 +56,46 @@ def _mean_evasion_rate(adv_data: dict | None, model_name: str) -> float | None:
     return round(sum(rates) / len(rates), 5) if rates else None
 
 
+def _rows_from_baselines(baselines: dict, adv_data: dict) -> list[dict[str, Any]]:
+    """
+    Convert entries from baselines_post_aug.json into table rows compatible
+    with the master comparison table.
+
+    Baseline latency lives directly on each entry (not in latency_summary.json),
+    so it is mapped here rather than via the latency_by_model lookup used for
+    neural models.
+    """
+    rows: list[dict[str, Any]] = []
+    for key, entry in baselines.items():
+        m = entry.get("overall", {})
+        if not m:
+            continue
+        lat = entry.get("latency", {})
+        phase = entry.get("phase", "post_aug")
+        # Distinguish post-aug baselines from pre-aug in the table label.
+        model_label = f"{key} [{phase}]"
+        row: dict[str, Any] = {
+            "Model":     model_label,
+            "F1":        m.get("f1"),
+            "Precision": m.get("precision"),
+            "Recall":    m.get("recall"),
+            "FPR":       m.get("fpr"),
+            "AUC-PR":    m.get("auc_pr"),
+            "AUC-ROC":   m.get("auc_roc"),
+            # Baseline latency: p99 may be in ms (XGBoost) or derived from µs (AC)
+            "p99_ms_bs1":     lat.get("p99_ms"),
+            "RPS_bs1":        lat.get("throughput_rps"),
+            "latency_device": lat.get("device"),
+            # Baselines have no adversarial eval, memory footprint, or novel detection
+            "mean_evasion_rate":    _mean_evasion_rate(adv_data, key),
+            "mean_novel_detection": None,
+            "disk_mb":   None,
+            "n_params":  None,
+        }
+        rows.append(row)
+    return rows
+
+
 def _mean_novel_detection(novel_data: dict | None) -> float | None:
     """Mean detection rate across all novel attack classes."""
     if not novel_data:
@@ -74,11 +114,12 @@ def run(args: argparse.Namespace) -> None:
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Load all report files ─────────────────────────────────────────────────
-    det_data    = _safe_load(metrics_dir / "detection_results.json")        or {}
-    lat_data    = _safe_load(lat_dir / "latency_summary.json")              or {}
-    adv_data    = _safe_load(metrics_dir / "adversarial_summary.json")      or {}
-    novel_data  = _safe_load(metrics_dir / "novel_attack_generalization.json") or {}
-    mem_data    = _safe_load(metrics_dir / "memory_footprint.json")         or {}
+    det_data         = _safe_load(metrics_dir / "detection_results.json")           or {}
+    lat_data         = _safe_load(lat_dir / "latency_summary.json")                 or {}
+    adv_data         = _safe_load(metrics_dir / "adversarial_summary.json")         or {}
+    novel_data       = _safe_load(metrics_dir / "novel_attack_generalization.json") or {}
+    mem_data         = _safe_load(metrics_dir / "memory_footprint.json")            or {}
+    baselines_post   = _safe_load(metrics_dir / "baselines_post_aug.json")          or {}
 
     # Pre-compute mean novel detection (same for all model rows since the novel
     # eval currently only runs on the teacher; extend per-model when available)
@@ -142,6 +183,17 @@ def run(args: argparse.Namespace) -> None:
             row["fp_safe_malform"] = fp.get("category_counts", {}).get("safe_but_malformed")
 
         rows.append(row)
+
+    # ── Append post-augmentation baselines ───────────────────────────────────
+    if baselines_post:
+        baseline_rows = _rows_from_baselines(baselines_post, adv_data)
+        rows.extend(baseline_rows)
+        log.info(f"Added {len(baseline_rows)} post-augmentation baseline row(s) to comparison table")
+    else:
+        log.warning(
+            "baselines_post_aug.json not found — baselines will not appear in the comparison table. "
+            "Run: make baselines_post_aug"
+        )
 
     if not rows:
         log.error("No model data found — ensure detection_results.json exists")

@@ -79,7 +79,7 @@ def build_corpus(
     """
     Build a plain-text HTTP corpus for BPE training.
 
-    One normalised request per line; CRLF boundaries are preserved as
+    One Normalized request per line; CRLF boundaries are preserved as
     special tokens rather than collapsed into whitespace.
     """
     log.info("Building tokenizer training corpus...")

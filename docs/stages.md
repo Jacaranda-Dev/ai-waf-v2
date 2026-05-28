@@ -9,13 +9,13 @@ The pipeline is composed of seven sequential stages under `stages/`. Each stage 
 **Directory:** `stages/1_data_acquisition_and_curation/`  
 **Make target:** `make data_collect`
 
-Downloads public HTTP datasets, normalises them to the canonical `HttpRecord` format, deduplicates across sources, and produces a corpus report.
+Downloads public HTTP datasets, Normalizes them to the canonical `HttpRecord` format, deduplicates across sources, and produces a corpus report.
 
 ### Scripts
 
 #### `01_acquire_and_normalize.py`
 
-Single-pass download → normalise → Parquet writer. For each configured dataset:
+Single-pass download → Normalize → Parquet writer. For each configured dataset:
 
 1. Checks for a local copy; downloads via Kagglehub with SHA-256 verification if absent
 2. Adapts the source schema to `HttpRecord` using per-dataset converters (`CLASS_ALIASES` canonicalisation)
@@ -25,7 +25,7 @@ Datasets handled: CSIC 2010, SR-BH 2020, ECML/PKDD 2007, and additional sources 
 
 #### `02_cross_dataset_dedup.py`
 
-Two-pass deduplication across all normalised Parquet files:
+Two-pass deduplication across all Normalized Parquet files:
 
 - **Pass 1** — exact SHA-256 hash of the `raw` field; drops byte-identical records
 - **Pass 2** — MinHash LSH at configurable Jaccard threshold (default 0.85); drops near-duplicates

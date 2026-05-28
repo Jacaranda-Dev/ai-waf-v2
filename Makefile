@@ -15,7 +15,7 @@ include .env
 export $(shell sed 's/=.*//' .env)
 
 .PHONY: all setup \
-        baselines \
+        baselines baselines_post_aug \
         data_collect data_analyze data_augment_rules data_augment_grammar \
         data_augment_local_llm data_augment_api_llm data_augment_benign \
         data_filter data_validate data_split \
@@ -103,16 +103,20 @@ data_analyze: data_collect
 	$(PYTHON) stages/1_data_acquisition_and_curation/03_generate_corpus_report.py        --config $(CFG)
 
 # ─────────────────────────────────────────────
-# STAGE 2 — BASELINES
+# STAGE 2 — BASELINES  (pre-augmentation)
+# Runs on the raw curated splits to establish motivation baselines.
+# Splits are saved to data/splits_pre_aug/ so they survive Stage 3's overwrite.
 # ─────────────────────────────────────────────
 baselines:
-	@echo "=== Stage 2: Baselines ==="
-	$(PYTHON) stages/2_baselines/00_stratified_split.py    --config $(CFG)
-	$(PYTHON) stages/2_baselines/01_define_slos.py           --config $(CFG)
-	$(PYTHON) stages/2_baselines/02_modsecurity_crs.py       --config $(CFG)
-	$(PYTHON) stages/2_baselines/03_tfidf_xgboost.py         --config $(CFG)
-	$(PYTHON) stages/2_baselines/04_tfidf_lightgbm.py        --config $(CFG)
-	@echo "Baseline metrics written to reports/metrics/baselines.json"
+	@echo "=== Stage 2: Baselines (pre-augmentation) ==="
+	$(PYTHON) stages/2_baselines/00_stratified_split.py          --config $(CFG)
+	@mkdir -p data/splits_pre_aug
+	@cp data/splits/*.parquet data/splits_pre_aug/
+	$(PYTHON) stages/2_baselines/01_define_slos.py               --config $(CFG)
+	$(PYTHON) stages/2_baselines/02_modsecurity_crs.py           --config $(CFG)
+	$(PYTHON) stages/2_baselines/03_classical_ml_baseline.py     --config $(CFG) \
+	    --split-dir data/splits_pre_aug --out-file baselines.json --phase pre_aug
+	@echo "Pre-augmentation baseline metrics → reports/metrics/baselines.json"
 
 # ─────────────────────────────────────────────
 # STAGE 3 — DATA AUGMENTATION
@@ -270,10 +274,19 @@ eval_interp:
 	$(PYTHON) stages/7_evaluation/12_shap_analysis.py              --config $(CFG)
 	$(PYTHON) stages/7_evaluation/13_error_analysis.py             --config $(CFG)
 
-compare_all: eval_detection eval_latency eval_adversarial eval_ablation eval_interp
+# Re-run classical baselines on the augmented splits for a fair comparison
+# against the neural models in the master comparison table.
+# Requires data_split (Stage 3.17) to have run first.
+baselines_post_aug:
+	@echo "=== Stage 7: Baselines (post-augmentation — fair comparison) ==="
+	$(PYTHON) stages/2_baselines/03_classical_ml_baseline.py     --config $(CFG) \
+	    --out-file baselines_post_aug.json --phase post_aug
+	@echo "Post-augmentation baseline metrics → reports/metrics/baselines_post_aug.json"
+
+compare_all: eval_detection eval_latency eval_adversarial eval_ablation eval_interp baselines_post_aug
 	@echo "=== Stage 7.14: Master Comparison Table ==="
 	$(PYTHON) stages/7_evaluation/14_comparison_table.py           --config $(CFG)
-	# Produces Table 1 — all models vs all baselines vs all metrics
+	# Produces Table 1 — all models vs all baselines (post-aug) vs all metrics
 
 report:
 	@echo "=== Final Report Generation ==="
