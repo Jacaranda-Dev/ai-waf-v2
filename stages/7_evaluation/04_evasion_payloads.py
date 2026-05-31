@@ -28,6 +28,8 @@ from ai_waf_v2.eval.adversarial import AdversarialEvaluator, TAMPER_REGISTRY
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -35,7 +37,19 @@ log = get_logger(__name__)
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg    = load_config(args.config)
+
+    require_inputs({
+        "data/splits/test.parquet": "make data_augment_all",
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "adversarial_summary.json",
+        args.force, "Stage 7.4 evasion payloads"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    timer  = StepTimer()
 
     tokenizer = HttpTokenizer.load(
         cfg.tokenizer.track_b.output_dir,
@@ -85,11 +99,12 @@ def run(args: argparse.Namespace) -> None:
         tampers = cfg.evaluation.adversarial.tamper_scripts or list(TAMPER_REGISTRY.keys())
         wordlists = cfg.evaluation.adversarial.evasion_wordlists
 
-        results = evaluator.run(
-            malicious_records=records[:2000],   # cap for speed
-            tamper_scripts=tampers,
-            evasion_wordlists=wordlists,
-        )
+        with timer.step(f"evaluate_{model_label}"):
+            results = evaluator.run(
+                malicious_records=records[:2000],   # cap for speed
+                tamper_scripts=tampers,
+                evasion_wordlists=wordlists,
+            )
 
         log.info(f"\n{'Tamper':25s}  {'Detection':>10}  {'Evasion':>10}")
         log.info("-" * 50)
@@ -109,7 +124,7 @@ def run(args: argparse.Namespace) -> None:
 
     # Summary
     (reports_dir / "adversarial_summary.json").write_text(
-        json.dumps(all_reports, indent=2)
+        json.dumps({**all_reports, "timings_s": timer.timings}, indent=2)
     )
     log.info(f"\nAdversarial summary saved to {reports_dir / 'adversarial_summary.json'}")
 
@@ -132,6 +147,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{model_label}_mean_evasion"]   = float(mean_eva)
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(reports_dir / "adversarial_summary.json"))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -139,6 +155,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

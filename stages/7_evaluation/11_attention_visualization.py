@@ -24,6 +24,8 @@ from ai_waf_v2.models.head import WafClassifier
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -88,6 +90,15 @@ class AttentionExtractor:
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg    = load_config(args.config)
+    require_inputs({
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+        "data/splits/test.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "attention_visualization.json",
+        args.force, "Stage 7.11 attention visualization"
+    ):
+        return
     device = torch.device("cpu")   # attention viz on CPU for simplicity
 
     tokenizer = HttpTokenizer.load(
@@ -103,6 +114,7 @@ def run(args: argparse.Namespace) -> None:
     model.eval()
 
     extractor = AttentionExtractor(model)
+    timer = StepTimer()
 
     # Load one sample per attack class from test split
     test_path = Path(cfg.paths.data_splits) / "test.parquet"
@@ -115,51 +127,52 @@ def run(args: argparse.Namespace) -> None:
 
     results: list[dict[str, Any]] = []
 
-    for cls in attack_classes[:6]:   # cap at 6 classes
-        samples = df[df["attack_class"] == cls].head(SAMPLES_PER_CLASS)
-        for _, row in samples.iterrows():
-            text  = row["raw"]
-            label = int(row["label"])
-            enc   = tokenizer.encode(text)
-            ids   = enc.ids[:cfg.tokenizer.seq_len]
-            toks  = enc.tokens[:cfg.tokenizer.seq_len]
-            pad_len = cfg.tokenizer.seq_len - len(ids)
-            pad_id  = tokenizer.pad_token_id
+    with timer.step("extract_attention"):
+        for cls in attack_classes[:6]:   # cap at 6 classes
+            samples = df[df["attack_class"] == cls].head(SAMPLES_PER_CLASS)
+            for _, row in samples.iterrows():
+                text  = row["raw"]
+                label = int(row["label"])
+                enc   = tokenizer.encode(text)
+                ids   = enc.ids[:cfg.tokenizer.seq_len]
+                toks  = enc.tokens[:cfg.tokenizer.seq_len]
+                pad_len = cfg.tokenizer.seq_len - len(ids)
+                pad_id  = tokenizer.pad_token_id
 
-            input_ids      = torch.tensor([ids + [pad_id]*pad_len], dtype=torch.long)
-            attention_mask = torch.tensor([[1]*len(ids) + [0]*pad_len], dtype=torch.long)
+                input_ids      = torch.tensor([ids + [pad_id]*pad_len], dtype=torch.long)
+                attention_mask = torch.tensor([[1]*len(ids) + [0]*pad_len], dtype=torch.long)
 
-            extractor.clear()
-            with torch.no_grad():
-                out = model(input_ids, attention_mask)
-                pred   = torch.argmax(out["logits"], dim=-1).item()
-                prob   = torch.softmax(out["logits"], dim=-1)[0, 1].item()
+                extractor.clear()
+                with torch.no_grad():
+                    out = model(input_ids, attention_mask)
+                    pred   = torch.argmax(out["logits"], dim=-1).item()
+                    prob   = torch.softmax(out["logits"], dim=-1)[0, 1].item()
 
-            if extractor.weights:
-                attn_matrix = extractor.weights[0]  # (1, H, T, T)
-                # Average over heads; take CLS row (position 0)
-                cls_attn = attn_matrix[0].mean(0)[0, :len(toks)].tolist()
-            else:
-                cls_attn = []
+                if extractor.weights:
+                    attn_matrix = extractor.weights[0]  # (1, H, T, T)
+                    # Average over heads; take CLS row (position 0)
+                    cls_attn = attn_matrix[0].mean(0)[0, :len(toks)].tolist()
+                else:
+                    cls_attn = []
 
-            # Find top-5 attended tokens
-            top5 = sorted(enumerate(cls_attn), key=lambda x: x[1], reverse=True)[:5]
+                # Find top-5 attended tokens
+                top5 = sorted(enumerate(cls_attn), key=lambda x: x[1], reverse=True)[:5]
 
-            results.append({
-                "attack_class":    cls,
-                "label":           label,
-                "pred":            pred,
-                "prob_malicious":  round(prob, 4),
-                "tokens":          toks[:20],        # first 20 tokens
-                "cls_attention":   cls_attn[:20],    # CLS attention to first 20 positions
-                "top5_attended":   [(toks[i] if i < len(toks) else "PAD", round(w, 4))
-                                    for i, w in top5],
-            })
+                results.append({
+                    "attack_class":    cls,
+                    "label":           label,
+                    "pred":            pred,
+                    "prob_malicious":  round(prob, 4),
+                    "tokens":          toks[:20],        # first 20 tokens
+                    "cls_attention":   cls_attn[:20],    # CLS attention to first 20 positions
+                    "top5_attended":   [(toks[i] if i < len(toks) else "PAD", round(w, 4))
+                                        for i, w in top5],
+                })
 
-            log.info(
-                f"  {cls:20s}: pred={pred} prob={prob:.3f}  "
-                f"top token='{results[-1]['top5_attended'][0][0] if results[-1]['top5_attended'] else '?'}'"
-            )
+                log.info(
+                    f"  {cls:20s}: pred={pred} prob={prob:.3f}  "
+                    f"top token='{results[-1]['top5_attended'][0][0] if results[-1]['top5_attended'] else '?'}'"
+                )
 
     out = Path(cfg.paths.reports) / "metrics" / "attention_visualization.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +197,7 @@ def run(args: argparse.Namespace) -> None:
                 "accuracy":          float(n_correct / max(1, len(results))),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -191,6 +205,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

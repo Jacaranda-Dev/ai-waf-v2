@@ -27,6 +27,8 @@ import pyarrow.parquet as pq
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -92,6 +94,17 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        "data/normalized/deduped.parquet": "make data_collect",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json",
+        args.force, "Stage 3.6 taxonomy inventory"
+    ):
+        return
+
+    timer = StepTimer()
+
     # ── Load base (pre-augmentation) data ─────────────────────────────────
     base_paths = [
         Path(cfg.paths.data_normalized) / "deduped.parquet",
@@ -102,10 +115,11 @@ def run(args: argparse.Namespace) -> None:
         log.error("No Normalized base data found — run Stage 1 first")
         return
 
-    base_table   = pq.read_table(base_path, columns=["label", "attack_class", "source"])
-    base_classes = base_table["attack_class"].to_pylist()
-    base_labels  = base_table["label"].to_pylist()
-    base_sources = base_table["source"].to_pylist()
+    with timer.step("load_base_data"):
+        base_table   = pq.read_table(base_path, columns=["label", "attack_class", "source"])
+        base_classes = base_table["attack_class"].to_pylist()
+        base_labels  = base_table["label"].to_pylist()
+        base_sources = base_table["source"].to_pylist()
 
     base_class_counts = Counter(c for c in base_classes if c != "benign")
     base_benign       = sum(1 for l in base_labels if l == 0)
@@ -118,15 +132,16 @@ def run(args: argparse.Namespace) -> None:
     aug_class_counts: Counter = Counter()
     aug_source_counts: Counter = Counter()
 
-    for fp in aug_files:
-        try:
-            t = pq.read_table(fp, columns=["attack_class", "source"])
-            aug_class_counts.update(
-                c for c in t["attack_class"].to_pylist() if c and c != "benign"
-            )
-            aug_source_counts.update(t["source"].to_pylist())
-        except Exception as e:
-            log.warning(f"Could not read {fp}: {e}")
+    with timer.step("load_aug_data"):
+        for fp in aug_files:
+            try:
+                t = pq.read_table(fp, columns=["attack_class", "source"])
+                aug_class_counts.update(
+                    c for c in t["attack_class"].to_pylist() if c and c != "benign"
+                )
+                aug_source_counts.update(t["source"].to_pylist())
+            except Exception as e:
+                log.warning(f"Could not read {fp}: {e}")
 
     # ── Combined ───────────────────────────────────────────────────────────
     combined_class_counts: Counter = Counter()
@@ -210,6 +225,7 @@ def run(args: argparse.Namespace) -> None:
             "base_total":     len(base_labels),
             "aug_total":      sum(aug_class_counts.values()),
         },
+        "timings_s": timer.timings,
     }
 
     out = Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json"
@@ -238,6 +254,7 @@ def run(args: argparse.Namespace) -> None:
                 "aug_total":        float(sum(aug_class_counts.values())),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -245,6 +262,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

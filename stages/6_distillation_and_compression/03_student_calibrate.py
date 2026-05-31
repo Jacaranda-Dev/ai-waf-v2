@@ -40,6 +40,8 @@ from ai_waf_v2.models.student import StudentClassifier
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -123,7 +125,18 @@ def run(args: argparse.Namespace) -> None:
     cfg         = load_config(args.config)
     student_cfg = cfg.model.student
 
+    require_inputs({
+        f"{student_cfg.output_dir}/best_student.pt": "run 02_distill_train.py",
+        "data/splits/val.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "student_threshold.json",
+        args.force, "Stage 6.3 student calibration"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    timer  = StepTimer()
 
     # ── Load student ──────────────────────────────
     checkpoint = Path(student_cfg.output_dir) / "best_student.pt"
@@ -163,14 +176,16 @@ def run(args: argparse.Namespace) -> None:
 
     # ── Score collection ──────────────────────────
     log.info("Collecting student scores on validation set...")
-    scores, labels = _collect_scores(student, val_loader, device)
+    with timer.step("collect_scores"):
+        scores, labels = _collect_scores(student, val_loader, device)
     log.info(f"Collected {len(scores):,} samples — "
              f"{labels.sum():,} attacks / {(1-labels).sum():,} benign")
 
     # ── Threshold sweep ───────────────────────────
-    max_fpr   = getattr(cfg.slo, "max_fpr", 0.005)
-    sweep     = _sweep_thresholds(scores, labels, n_steps=400)
-    best      = _select_threshold(sweep, max_fpr=max_fpr)
+    max_fpr = getattr(cfg.slo, "max_fpr", 0.005)
+    with timer.step("threshold_sweep"):
+        sweep = _sweep_thresholds(scores, labels, n_steps=400)
+        best  = _select_threshold(sweep, max_fpr=max_fpr)
 
     log.info("=" * 60)
     log.info("Student Threshold Calibration Results")
@@ -201,6 +216,7 @@ def run(args: argparse.Namespace) -> None:
         "slo_satisfied":        best["fpr"] <= max_fpr,
         "n_val_samples":        int(len(scores)),
         "full_sweep":           sweep,
+        "timings_s":            timer.timings,
     }, indent=2))
 
     log.info(f"Student threshold saved to {out_path}")
@@ -224,6 +240,7 @@ def run(args: argparse.Namespace) -> None:
                 "slo_satisfied":        float(best["fpr"] <= max_fpr),
             })
             mlflow.log_artifact(str(out_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -231,6 +248,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Calibrate student classification threshold.")
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

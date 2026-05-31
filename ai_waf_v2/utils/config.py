@@ -30,15 +30,16 @@ class ProjectConfig(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    data_raw:        Path = Path("data/raw")
-    data_normalized: Path = Path("data/normalized")
-    data_augmented:  Path = Path("data/augmented")
-    data_filtered:   Path = Path("data/filtered")
-    data_splits:     Path = Path("data/splits")
-    models:          Path = Path("models")
-    tokenizers:      Path = Path("tokenizers")
-    reports:         Path = Path("reports")
-    mlruns:          Path = Path("mlruns")
+    data_raw:            Path = Path("data/raw")
+    data_normalized:     Path = Path("data/normalized")
+    data_augmented:      Path = Path("data/augmented")
+    data_filtered:       Path = Path("data/filtered")
+    data_splits:         Path = Path("data/splits")
+    data_splits_pre_aug: Path = Path("data/splits_pre_aug")
+    models:              Path = Path("models")
+    tokenizers:          Path = Path("tokenizers")
+    reports:             Path = Path("reports")
+    mlruns:              Path = Path("mlruns")
 
 
 class SloConfig(BaseModel):
@@ -121,21 +122,19 @@ class AugGrammarConfig(BaseModel):
     samples_per_class:  int       = 5000
 
 
-class AugLocalLLMConfig(BaseModel):
-    model_path:             str   = ""
-    model_type:             str   = "causal"
-    batch_size:             int   = 8
-    max_new_tokens:         int   = 256
-    temperature:            float = 0.9
-    samples_per_gap_class:  int   = 1000
-
-
-class AugApiLLMConfig(BaseModel):
-    provider:       str = "anthropic"
-    model:          str = "claude-sonnet-4-20250514"
-    max_tokens:     int = 512
-    samples_benign: int = 10_000
-    samples_edge_case: int = 2000
+class AugLlmConfig(BaseModel):
+    provider:         str   = "local"       # anthropic | google | local | ollama
+    model:            str   = "mistral"            # model name/tag for cloud and ollama providers
+    model_path:       str   = ""            # GGUF path; required for provider=local
+    ollama_base_url:  str   = "http://localhost:11434"
+    temperature:      float = 0.9
+    max_tokens:       int   = 512
+    request_timeout:  int   = 30            # socket timeout in seconds (ollama only)
+    # Module A (attack synthesis)
+    samples_per_gap_class: int = 1000
+    # Module B (benign framing)
+    samples_benign:    int = 10_000
+    samples_edge_case: int = 2_000
 
 
 class AugBenignConfig(BaseModel):
@@ -152,12 +151,14 @@ class AugFilterConfig(BaseModel):
 
 
 class AugmentationConfig(BaseModel):
-    rules:      AugRulesConfig    = Field(default_factory=AugRulesConfig)
-    grammar:    AugGrammarConfig  = Field(default_factory=AugGrammarConfig)
-    local_llm:  AugLocalLLMConfig = Field(default_factory=AugLocalLLMConfig)
-    api_llm:    AugApiLLMConfig   = Field(default_factory=AugApiLLMConfig)
-    benign:     AugBenignConfig   = Field(default_factory=AugBenignConfig)
-    filtering:  AugFilterConfig   = Field(default_factory=AugFilterConfig)
+    min_samples_per_class: int = 500   # classes below this are flagged in the corpus report
+    target_per_class:      int = 5000  # governor fills gaps up to this count
+    chain_length:          int = 2     # mutation chain depth in attack synthesis
+    rules:      AugRulesConfig   = Field(default_factory=AugRulesConfig)
+    grammar:    AugGrammarConfig = Field(default_factory=AugGrammarConfig)
+    llm:        AugLlmConfig     = Field(default_factory=AugLlmConfig)
+    benign:     AugBenignConfig  = Field(default_factory=AugBenignConfig)
+    filtering:  AugFilterConfig  = Field(default_factory=AugFilterConfig)
 
 
 class TokenizerTrackAConfig(BaseModel):
@@ -325,21 +326,38 @@ class MLflowConfig(BaseModel):
     tags:            dict[str, str] = Field(default_factory=dict)
 
 
+class HuggingFaceReposConfig(BaseModel):
+    tokenizer:         str = "waf-tokenizer-track-b"
+    teacher:           str = "waf-teacher-99m"
+    student:           str = "waf-student-10m"
+    dataset_base:      str = "waf-dataset-base"
+    dataset_aug:       str = "waf-dataset-augmented"
+    dataset_synthesis: str = "waf-dataset-synthesis"
+    dataset_framed:    str = "waf-dataset-framed"
+
+
+class HuggingFaceConfig(BaseModel):
+    org:     str  = ""      # set via HF_ORG env var; token via HF_TOKEN env var
+    private: bool = True
+    repos:   HuggingFaceReposConfig = Field(default_factory=HuggingFaceReposConfig)
+
+
 # ─────────────────────────────────────────────────────────
 # Root config model
 # ─────────────────────────────────────────────────────────
 
 class PipelineConfig(BaseModel):
-    project:       ProjectConfig     = Field(default_factory=ProjectConfig)
-    paths:         PathsConfig       = Field(default_factory=PathsConfig)
-    slo:           SloConfig         = Field(default_factory=SloConfig)
-    data:          DataConfig        = Field(default_factory=DataConfig)
+    project:       ProjectConfig      = Field(default_factory=ProjectConfig)
+    paths:         PathsConfig        = Field(default_factory=PathsConfig)
+    slo:           SloConfig          = Field(default_factory=SloConfig)
+    data:          DataConfig         = Field(default_factory=DataConfig)
     augmentation:  AugmentationConfig = Field(default_factory=AugmentationConfig)
-    tokenizer:     TokenizerConfig   = Field(default_factory=TokenizerConfig)
-    model:         ModelConfig       = Field(default_factory=ModelConfig)
-    training:      TrainingConfig    = Field(default_factory=TrainingConfig)
-    evaluation:    EvaluationConfig  = Field(default_factory=EvaluationConfig)
-    mlflow:        MLflowConfig      = Field(default_factory=MLflowConfig)
+    tokenizer:     TokenizerConfig    = Field(default_factory=TokenizerConfig)
+    model:         ModelConfig        = Field(default_factory=ModelConfig)
+    training:      TrainingConfig     = Field(default_factory=TrainingConfig)
+    evaluation:    EvaluationConfig   = Field(default_factory=EvaluationConfig)
+    mlflow:        MLflowConfig       = Field(default_factory=MLflowConfig)
+    huggingface:   HuggingFaceConfig  = Field(default_factory=HuggingFaceConfig)
 
 
 # ─────────────────────────────────────────────────────────

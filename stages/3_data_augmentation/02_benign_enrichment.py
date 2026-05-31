@@ -1,7 +1,7 @@
 """
-stages/3_data_augmentation/03_benign_enrichment.py
+stages/3_data_augmentation/02_benign_enrichment.py
 --------------------------------------------------
-Module C — Benign Corpus Enrichment
+Module B — Benign Corpus Enrichment
 
 Merges: 10_benign_replay_traces
 
@@ -9,12 +9,12 @@ Architecture:
   - Extracts realistic metadata distributions (header frequency, path depth,
     UA fingerprints) from CAIDA PCAP traces when available
   - Uses those distributions to parameterize the programmatic REST generator
-    in Module B (02_request_framing.py) — "distribution alignment"
+    in Module C (03_request_framing.py) — "distribution alignment"
   - Falls back gracefully to internal defaults when no PCAP trace is provided
-  - Writes a distribution profile JSON that Module B reads on startup
+  - Writes a distribution profile JSON that Module C reads on startup
 
 Run:
-    python stages/3_data_augmentation/03_benign_enrichment.py \
+    python stages/3_data_augmentation/02_benign_enrichment.py \
         --config config/pipeline.yaml [--pcap-dir /path/to/caida]
 """
 
@@ -32,6 +32,8 @@ import pyarrow.parquet as pq
 from ai_waf_v2.data.schema import HttpRecord, records_to_table
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -276,6 +278,12 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     rng = random.Random(cfg.project.seed)
 
+    if check_output(
+        Path(cfg.paths.data_augmented) / "benign" / "benign_aligned.parquet",
+        args.force, "Stage 3.2 benign enrichment"
+    ):
+        return
+
     benign_cfg  = getattr(cfg.augmentation, "benign", None)
     replay_on   = getattr(benign_cfg, "replay_enabled", False) if benign_cfg else False
     pcap_dir    = Path(args.pcap_dir or (getattr(benign_cfg, "replay_path", "") if benign_cfg else ""))
@@ -286,25 +294,31 @@ def run(args: argparse.Namespace) -> None:
     dist_path  = Path(cfg.paths.reports) / "metrics" / "benign_distribution.json"
     dist_path.parent.mkdir(parents=True, exist_ok=True)
 
+    timer = StepTimer()
+
     # ── Extract PCAP distributions ────────────────────────────────────────
     flows: list[dict] = []
     if replay_on and pcap_dir.exists():
         log.info(f"Extracting metadata distributions from PCAP traces: {pcap_dir}")
         extractor = PcapMetadataExtractor(pcap_dir, max_packets=200_000)
-        flows     = extractor.extract()
+        with timer.step("pcap_extract"):
+            flows = extractor.extract()
     else:
         log.info("PCAP replay disabled or path not found — using internal default distributions")
 
-    dist = TrafficDistribution.from_flows(flows)
+    with timer.step("distribution_fit"):
+        dist = TrafficDistribution.from_flows(flows)
     dist_path.write_text(json.dumps(dist.to_dict(), indent=2))
     log.info(f"Distribution profile written → {dist_path}")
 
     # ── Generate distribution-aligned benign records ──────────────────────
     log.info(f"Generating {n_aligned:,} distribution-aligned benign records...")
-    records = make_aligned_benign(dist, n_aligned, rng)
+    with timer.step("benign_generation"):
+        records = make_aligned_benign(dist, n_aligned, rng)
 
     out_path = out_dir / "benign_aligned.parquet"
-    pq.write_table(records_to_table(records), out_path, compression="snappy")
+    with timer.step("parquet_write"):
+        pq.write_table(records_to_table(records), out_path, compression="snappy")
     log.info(f"Wrote {len(records):,} aligned benign records → {out_path}")
 
     stats = {
@@ -312,6 +326,7 @@ def run(args: argparse.Namespace) -> None:
         "n_aligned_benign": len(records),
         "pcap_dir":         str(pcap_dir) if pcap_dir else None,
         "distribution":     dist.to_dict(),
+        "timings_s":        timer.timings,
     }
     sp = Path(cfg.paths.reports) / "metrics" / "benign_enrichment.json"
     sp.write_text(json.dumps(stats, indent=2))
@@ -320,16 +335,17 @@ def run(args: argparse.Namespace) -> None:
         import mlflow
         from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
         init_experiment(cfg)
-        with mlflow.start_run(run_name="03_benign_enrichment"):
+        with mlflow.start_run(run_name="02_benign_enrichment"):
             mlflow.log_params({
-                "replay_enabled": replay_on,
-                "pcap_dir":       str(pcap_dir) if pcap_dir else "none",
+                "replay_enabled":   replay_on,
+                "pcap_dir":         str(pcap_dir) if pcap_dir else "none",
                 "n_aligned_target": n_aligned,
             })
             log_metrics_dict({
                 "n_pcap_flows":     float(len(flows)),
                 "n_aligned_benign": float(len(records)),
             })
+            timer.log_mlflow()
             mlflow.log_artifact(str(sp))
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
@@ -339,6 +355,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config",   default="config/pipeline.yaml")
     p.add_argument("--pcap-dir", default=None, help="Path to directory containing PCAP files")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

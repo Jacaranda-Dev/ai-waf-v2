@@ -73,7 +73,9 @@ from sklearn.pipeline import Pipeline
 from ai_waf_v2.eval.metrics import compute_metrics, compute_per_class_metrics
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -564,6 +566,10 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
+    require_inputs({
+        "data/splits/train.parquet": "make baselines",
+    })
+
     splits_dir  = Path(args.split_dir) if args.split_dir else Path(cfg.paths.data_splits)
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -587,7 +593,8 @@ def run(args: argparse.Namespace) -> None:
     y_test      = test_df["label"].to_numpy()
     test_classes = test_df["attack_class"].tolist()
 
-    slos = _load_slos(reports_dir)
+    slos  = _load_slos(reports_dir)
+    timer = StepTimer()
 
     baselines_path = reports_dir / args.out_file
     existing = json.loads(baselines_path.read_text()) if baselines_path.exists() else {}
@@ -597,7 +604,8 @@ def run(args: argparse.Namespace) -> None:
     log.info("\n" + "═" * 60)
     log.info("Baseline A: Aho-Corasick Fast-Match")
     log.info("═" * 60)
-    result_ac, m_ac, lat_ac = _run_fast_match(X_test_raw, y_test.tolist(), test_classes)
+    with timer.step("run_fast_match"):
+        result_ac, m_ac, lat_ac = _run_fast_match(X_test_raw, y_test.tolist(), test_classes)
     result_ac["slo_verdicts"] = _audit_slos("fast_match", m_ac, lat_ac, slos) if slos else {}
     result_ac["phase"] = phase
     existing["aho_corasick_fast_match"] = result_ac
@@ -615,12 +623,13 @@ def run(args: argparse.Namespace) -> None:
     )
 
     # Build all feature matrices once to avoid redundant vectorization
-    log.info("Vectorizing train…")
-    X_train_ng = vectorizer.fit_transform(X_train_raw)
-    log.info("Vectorizing val…")
-    X_val_ng   = vectorizer.transform(X_val_raw)
-    log.info("Vectorizing test…")
-    X_test_ng  = vectorizer.transform(X_test_raw)
+    with timer.step("vectorize"):
+        log.info("Vectorizing train…")
+        X_train_ng = vectorizer.fit_transform(X_train_raw)
+        log.info("Vectorizing val…")
+        X_val_ng   = vectorizer.transform(X_val_raw)
+        log.info("Vectorizing test…")
+        X_test_ng  = vectorizer.transform(X_test_raw)
 
     # Append structural HTTP features
     def _with_http(X_ng: sp.spmatrix, texts: list[str]) -> sp.spmatrix:
@@ -635,12 +644,13 @@ def run(args: argparse.Namespace) -> None:
     log.info("\n" + "═" * 60)
     log.info("Baseline B: XGBoost + HashedNGram + HTTP field features")
     log.info("═" * 60)
-    result_xgb, m_xgb, lat_xgb = _run_xgboost(
-        X_train_full, y_train, X_val_full, y_val, X_test_full, y_test,
-        X_test_raw, test_classes, vectorizer,
-        include_http=True, seed=cfg.project.seed,
-        model_key="xgboost_hashed_ngram_http",
-    )
+    with timer.step("run_xgboost"):
+        result_xgb, m_xgb, lat_xgb = _run_xgboost(
+            X_train_full, y_train, X_val_full, y_val, X_test_full, y_test,
+            X_test_raw, test_classes, vectorizer,
+            include_http=True, seed=cfg.project.seed,
+            model_key="xgboost_hashed_ngram_http",
+        )
     result_xgb["slo_verdicts"] = _audit_slos("xgboost+http", m_xgb, lat_xgb, slos) if slos else {}
     result_xgb["phase"] = phase
     existing["xgboost_hashed_ngram_http"] = result_xgb
@@ -650,12 +660,13 @@ def run(args: argparse.Namespace) -> None:
         log.info("\n" + "═" * 60)
         log.info("Baseline C: XGBoost + HashedNGram ONLY (ablation — no HTTP features)")
         log.info("═" * 60)
-        result_abl, m_abl, lat_abl = _run_xgboost(
-            X_train_ng, y_train, X_val_ng, y_val, X_test_ng, y_test,
-            X_test_raw, test_classes, vectorizer,
-            include_http=False, seed=cfg.project.seed,
-            model_key="xgboost_hashed_ngram_ablation",
-        )
+        with timer.step("run_xgboost_ablation"):
+            result_abl, m_abl, lat_abl = _run_xgboost(
+                X_train_ng, y_train, X_val_ng, y_val, X_test_ng, y_test,
+                X_test_raw, test_classes, vectorizer,
+                include_http=False, seed=cfg.project.seed,
+                model_key="xgboost_hashed_ngram_ablation",
+            )
         result_abl["slo_verdicts"] = _audit_slos("xgboost_ablation", m_abl, lat_abl, slos) if slos else {}
         result_abl["phase"] = phase
         existing["xgboost_hashed_ngram_ablation"] = result_abl
@@ -671,11 +682,12 @@ def run(args: argparse.Namespace) -> None:
         log.info("\n" + "═" * 60)
         log.info("Optional: LightGBM + HashedNGram + HTTP features")
         log.info("═" * 60)
-        result_lgbm = _run_lightgbm(
-            X_train_full, y_train, X_val_full, y_val, X_test_full, y_test,
-            X_test_raw, test_classes, vectorizer,
-            include_http=True, seed=cfg.project.seed,
-        )
+        with timer.step("run_lightgbm"):
+            result_lgbm = _run_lightgbm(
+                X_train_full, y_train, X_val_full, y_val, X_test_full, y_test,
+                X_test_raw, test_classes, vectorizer,
+                include_http=True, seed=cfg.project.seed,
+            )
         if result_lgbm:
             result_lgbm["slo_verdicts"] = (
                 _audit_slos("lightgbm", result_lgbm["overall"], result_lgbm["latency"], slos)
@@ -726,6 +738,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics["lift_auc"]  = float(ov_xgb["auc_pr"] - ov_abl["auc_pr"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(baselines_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -773,6 +786,8 @@ def parse_args() -> argparse.Namespace:
                    help="Pipeline phase tag written into each result entry "
                         "(pre_aug = before augmentation; post_aug = after augmentation). "
                         "Default: pre_aug")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

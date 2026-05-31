@@ -41,7 +41,9 @@ from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__, log_file="reports/distill_train.log")
 
@@ -134,7 +136,20 @@ def run(args: argparse.Namespace) -> None:
     dcfg        = cfg.training.distillation
 
     seed_everything(cfg.project.seed)
+
+    require_inputs({
+        f"{teacher_cfg.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(student_cfg.output_dir) / "best_student.pt",
+        args.force, "Stage 6.2 distillation training"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    timer  = StepTimer()
 
     # ── Tokenizer ─────────────────────────────────
     tokenizer = HttpTokenizer.load(
@@ -151,11 +166,12 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    log.info(f"Loading teacher from {teacher_path}...")
-    teacher = WafClassifier.load(teacher_path, teacher_cfg, map_location="cpu")
-    teacher.to(device).eval()
-    for p in teacher.parameters():
-        p.requires_grad = False
+    with timer.step("load_teacher"):
+        log.info(f"Loading teacher from {teacher_path}...")
+        teacher = WafClassifier.load(teacher_path, teacher_cfg, map_location="cpu")
+        teacher.to(device).eval()
+        for p in teacher.parameters():
+            p.requires_grad = False
 
     n_teacher = teacher.count_parameters()
     log.info(f"Teacher: {n_teacher:,} parameters")
@@ -186,16 +202,17 @@ def run(args: argparse.Namespace) -> None:
     collator   = WafCollator(pad_token_id=tokenizer.pad_token_id, max_seq_len=cfg.tokenizer.seq_len)
     splits_dir = cfg.paths.data_splits
 
-    train_loader = DataLoader(
-        WafDataset(get_split_path(splits_dir, "train"), tokenizer._tok, cfg.tokenizer.seq_len),
-        batch_size=dcfg.batch_size,
-        shuffle=True, collate_fn=collator, num_workers=4, pin_memory=True, drop_last=True,
-    )
-    val_loader = DataLoader(
-        WafDataset(get_split_path(splits_dir, "val"), tokenizer._tok, cfg.tokenizer.seq_len),
-        batch_size=dcfg.batch_size * 2,
-        shuffle=False, collate_fn=collator, num_workers=2, pin_memory=True,
-    )
+    with timer.step("setup_data"):
+        train_loader = DataLoader(
+            WafDataset(get_split_path(splits_dir, "train"), tokenizer._tok, cfg.tokenizer.seq_len),
+            batch_size=dcfg.batch_size,
+            shuffle=True, collate_fn=collator, num_workers=4, pin_memory=True, drop_last=True,
+        )
+        val_loader = DataLoader(
+            WafDataset(get_split_path(splits_dir, "val"), tokenizer._tok, cfg.tokenizer.seq_len),
+            batch_size=dcfg.batch_size * 2,
+            shuffle=False, collate_fn=collator, num_workers=2, pin_memory=True,
+        )
 
     # ── Training ──────────────────────────────────
     init_experiment(cfg)
@@ -224,7 +241,9 @@ def run(args: argparse.Namespace) -> None:
             device=device,
             temperature_scheduler=temp_sched,   # trainer must accept this kwarg
         )
-        trainer.train()
+        with timer.step("distillation"):
+            trainer.train()
+        timer.log_mlflow()
 
     log.info("Distillation training complete.")
 
@@ -234,6 +253,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config",            default="config/pipeline.yaml")
     p.add_argument("--teacher-path",      default=None)
     p.add_argument("--mlflow-run-name",   default=None)
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

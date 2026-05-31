@@ -13,6 +13,7 @@ paths:
   data_augmented:      "data/augmented"
   data_filtered:       "data/filtered"
   data_splits:         "data/splits"
+  data_splits_pre_aug: "data/splits_pre_aug"
   models:              "models"
   tokenizers:          "tokenizers"
   reports:             "reports"
@@ -56,7 +57,20 @@ data:
         "Sureda Riera, Tomás, Juan Ramón Bermejo Higuera, Javier Bermejo Higuera, Juan Antonio Sicilia Montalvo, y José Javier Martínez Herráiz. «SR-BH 2020 multi-label dataset», 2022. https://doi.org/10.7910/DVN/OGOIXX.""
       output_filename: "sr_bh_2020.csv"
       label_col: "label"
-    
+    - name: "HTTPParams"
+      kaggle_handle: "evg3n1j/httpparamsdataset"
+      converter_id: "http_params_v1" 
+      description: "Benign and malicious payloads in HTTP request parameters"
+      url:  "https://www.kaggle.com/datasets/evg3n1j/httpparamsdataset"     
+      mirrors:
+        - "https://github.com/Morzeux/HttpParamsDataset/blob/master/payload_full.csv"
+      archive_sha256: ""
+      manual_instructions: "Download from GitHub and place in data/raw/downloads/httpparams_raw.csv"
+      license: "MIT License"
+      citation: |
+        "?"
+      output_filename: "httpparams_raw.csv"
+      label_col: "label"
 
   schema:
     label_map:
@@ -90,6 +104,8 @@ data:
 # ─── AUGMENTATION ────────────────────────────────────
 augmentation:
   min_samples_per_class: 500   # classes below this are flagged for augmentation
+  target_per_class: 5000       # governor fills gaps up to this count
+  chain_length: 2              # mutation chain depth in attack synthesis
   rules:
     mutations_per_sample: 20
     encodings:
@@ -106,20 +122,17 @@ augmentation:
     targets: ["sqli", "xss", "lfi", "rfi", "ssrf", "cmdi"]
     samples_per_class: 5000
 
-  local_llm:
-    model_path:   "${LOCAL_LLM_PATH}"
-    model_type:   "causal"          # causal | seq2seq
-    batch_size:   8
-    max_new_tokens: 256
-    temperature:  0.9
-    samples_per_gap_class: 1000
-
-  api_llm:
-    provider:     "${LLM_PROVIDER}"  # anthropic | google
-    model:        "claude-sonnet-4-20250514"
-    max_tokens:   512
-    samples_benign: 10000
-    samples_edge_case: 2000
+  llm:
+    provider:        "${LLM_PROVIDER}"   # anthropic | google | local | ollama
+    model:           "mistral"                  # model name/tag for cloud and ollama providers
+    model_path:      "${LOCAL_LLM_PATH}" # GGUF path; required for provider=local
+    ollama_base_url:  "http://localhost:11434"
+    request_timeout:  30                 # socket timeout in seconds (ollama only)
+    temperature:      0.9
+    max_tokens:       512
+    samples_per_gap_class: 1000          # Module A: payloads per gap class
+    samples_benign:  10000               # Module B: standard benign records
+    samples_edge_case: 2000              # Module B: edge-case benign records
 
   benign:
     rest_samples:   20000
@@ -282,3 +295,18 @@ mlflow:
   tags:
     project: "ai-waf-v2"
     framework: "pytorch"
+
+# ─── HUGGING FACE ─────────────────────────────────────
+# Set HF_ORG and HF_TOKEN environment variables before running push_hub.
+# Use `huggingface-cli login` as an alternative to HF_TOKEN.
+huggingface:
+  org:     "${HF_ORG}"   # your HF username or org slug
+  private: true
+  repos:
+    tokenizer:         "waf-tokenizer-track-b"
+    teacher:           "waf-teacher-99m"
+    student:           "waf-student-10m"
+    dataset_base:      "waf-dataset-base"
+    dataset_aug:       "waf-dataset-augmented"
+    dataset_synthesis: "waf-dataset-synthesis"
+    dataset_framed:    "waf-dataset-framed"

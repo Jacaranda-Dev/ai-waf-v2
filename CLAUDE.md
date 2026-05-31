@@ -126,6 +126,7 @@ ai_waf_v2/
 │   └── adversarial.py      # Tamper functions + AdversarialEvaluator
 └── utils/
     ├── config.py           # Pydantic config + YAML loader
+    ├── llm.py              # Unified LLM call abstraction (anthropic | google | local | ollama)
     ├── logging.py          # Rich console + rotating file logger
     ├── mlflow_utils.py     # MLflow experiment helpers
     └── seed.py             # seed_everything()
@@ -335,6 +336,46 @@ Eight tamper functions in `TAMPER_REGISTRY`:
 
 Pydantic v2 config hierarchy loaded from `config/pipeline.yaml` with `${ENV_VAR}` expansion. Key paths: `config.model.track_b.d_model`, `config.model.student.d_model`, `config.training.distillation.temperature`, `config.slo.latency_inline_p99_ms`. Validates split ratios sum to 1.0 and `d_model % n_heads == 0`.
 
+#### `utils/llm.py`
+
+Unified LLM call abstraction used by any pipeline stage that needs text generation. Returns the raw text response (`str | None`); JSON parsing and any further structure extraction are the caller's responsibility.
+
+```python
+from ai_waf_v2.utils.llm import call_llm
+
+text = call_llm(
+    provider    = "anthropic",   # anthropic | google | local | ollama
+    system      = "You are ...",
+    user        = "Generate ...",
+    model       = "claude-sonnet-4-6",
+    max_tokens  = 512,
+    temperature = 0.7,
+    # provider=local  → model_path="/path/to/model.gguf"
+    # provider=ollama → ollama_base_url="http://localhost:11434"
+)
+```
+
+| Provider | Backend | Auth |
+|---|---|---|
+| `anthropic` | Anthropic Messages API | `ANTHROPIC_API_KEY` |
+| `google` | Google GenerativeAI | `GOOGLE_API_KEY` |
+| `local` | llama-cpp-python (GGUF, offline) | none |
+| `ollama` | Ollama HTTP `/api/chat` | none |
+
+The `local` provider lazy-loads the GGUF weights once per `model_path` (module-level cache); subsequent calls reuse the loaded model. Configured via `augmentation.llm` in `config/pipeline.yaml` — relevant fields: `provider`, `model`, `temperature`, `model_path`, `ollama_base_url`.
+
+**Debugging** — set `LLM_DEBUG=1` to log a truncated preview of every model response:
+
+```bash
+LLM_DEBUG=1 python stages/3_data_augmentation/02_request_framing.py --config config/pipeline.yaml
+```
+
+Each call emits one `DEBUG` line with the first 200 characters of the raw response (newlines escaped), e.g.:
+
+```
+DEBUG  [ollama] response preview: '["1 OR 1=1--", "admin\'--", "1; DROP TABLE users--", ...]'
+```
+
 #### `utils/logging.py`
 
 ```python
@@ -387,7 +428,7 @@ from ai_waf_v2.eval import (
     LatencyBenchmark, OnnxLatencyBenchmark,
     AdversarialEvaluator, TAMPER_REGISTRY,
 )
-from ai_waf_v2.utils import load_config, seed_everything, get_logger, configure_root
+from ai_waf_v2.utils import load_config, call_llm, seed_everything, get_logger, configure_root
 ```
 
 ---
@@ -436,7 +477,7 @@ Synthesises additional training samples to fill taxonomy gaps and balance class 
 
 | Script | Purpose |
 |---|---|
-| `01_attack_synthesis.py` | `AugmentationGovernor` reads `taxonomy_inventory.json`, computes per-class gaps, dispatches to generator registry: `GrammarGenerator` (context-free templates), `MutatorGenerator` (8 encoding transforms), `TamperGenerator` (7 SQLMap-style tampers), `LocalLLMGenerator` (Ollama). Parallel via ThreadPoolExecutor |
+| `01_attack_synthesis.py` | `AugmentationGovernor` reads `taxonomy_inventory.json`, computes per-class gaps, dispatches to generator registry: `GrammarGenerator` (context-free templates), `MutatorGenerator` (8 encoding transforms), `TamperGenerator` (7 SQLMap-style tampers), `LlmGenerator` (any provider via `call_llm`). Parallel via ThreadPoolExecutor |
 | `02_request_framing.py` | Wraps payloads in realistic HTTP envelopes. `HttpMetadataDistribution` singleton shares header/path/UA distributions across attack and benign framing to prevent synthetic fingerprinting. Cloud LLM benign via Anthropic/Google APIs |
 | `03_benign_enrichment.py` | Aligns benign generator distributions with real traffic from PCAP files (dpkt + scapy fallback); falls back to internal defaults |
 | `04_quality_gate.py` | Four-pass filter: (1) HTTP format validation, (2) tokenizer UNK-rate check, (3) MinHash LSH dedup, (4) CRS label consistency. Leakage guard removes records with Jaccard >0.70 to test/canary splits |

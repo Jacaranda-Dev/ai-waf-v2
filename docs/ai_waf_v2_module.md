@@ -31,6 +31,7 @@ ai_waf_v2/
     ├── config.py           # Pydantic config + YAML loader
     ├── logging.py          # Rich console + rotating file logger
     ├── mlflow_utils.py     # MLflow experiment helpers
+    ├── pipeline.py         # Stage guards: require_inputs / check_output
     └── seed.py             # seed_everything()
 ```
 
@@ -488,6 +489,50 @@ from ai_waf_v2.utils import seed_everything
 seed_everything(42, deterministic=False)
 # Seeds: Python random, NumPy, torch CPU, torch CUDA, PYTHONHASHSEED
 # deterministic=True enables cuDNN determinism (~5–10% throughput cost)
+```
+
+---
+
+### `utils/pipeline.py`
+
+Shared idempotency guards used by every stage entry-point script. Keeps guard logic in one place so individual scripts stay thin.
+
+#### `require_inputs(inputs: dict[str | Path, str]) -> None`
+
+Verifies that all prerequisite files exist before starting work. Exits with code 1 on the first missing file, printing the make target the user should run to produce it.
+
+```python
+from ai_waf_v2.utils.pipeline import require_inputs
+
+require_inputs({
+    "data/normalized/deduped.parquet": "make data_collect",
+    "reports/metrics/taxonomy_inventory.json": "make data_analyze",
+})
+```
+
+If `data/normalized/deduped.parquet` is absent, output is:
+
+```
+ERROR  Required input missing: data/normalized/deduped.parquet  →  run: make data_collect
+```
+
+#### `check_output(output: Path, force: bool, label: str = "") -> bool`
+
+Returns `True` (skip) when the primary output file already exists and is non-empty and `force` is `False`. Returns `False` when the caller should proceed (file missing, file empty, or `force=True`).
+
+```python
+from ai_waf_v2.utils.pipeline import check_output
+from pathlib import Path
+
+if check_output(Path("reports/corpus_report.json"), args.force, "Corpus report"):
+    return   # already done
+# ... do work ...
+```
+
+If the output exists, output is:
+
+```
+INFO   Corpus report already exists (42,317 bytes) — skipping. Pass --force to re-run.
 ```
 
 ---

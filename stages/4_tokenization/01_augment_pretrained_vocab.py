@@ -18,6 +18,8 @@ from pathlib import Path
 from ai_waf_v2.tokenizer.vocab_utils import augment_pretrained_vocab
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 from tokenizer_eval import check_token_shadowing, summarise_shadowing
 
@@ -29,14 +31,26 @@ def run(args: argparse.Namespace) -> None:
     cfg    = load_config(args.config)
     tok_a  = cfg.tokenizer.track_a
 
+    require_inputs({
+        "data/splits/train.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(tok_a.output_dir) / "tokenizer_config.json",
+        args.force, "Stage 4.1 Track A vocab augmentation"
+    ):
+        return
+
+    timer = StepTimer()
+
     # ------------------------------------------------------------------
     # Augment vocabulary
     # ------------------------------------------------------------------
-    tokenizer, n_added = augment_pretrained_vocab(
-        base_model=tok_a.base_model,
-        new_tokens=tok_a.http_tokens,
-        output_dir=tok_a.output_dir,
-    )
+    with timer.step("augment_vocab"):
+        tokenizer, n_added = augment_pretrained_vocab(
+            base_model=tok_a.base_model,
+            new_tokens=tok_a.http_tokens,
+            output_dir=tok_a.output_dir,
+        )
     log.info(f"Track A: {n_added} new tokens added to '{tok_a.base_model}' vocab")
     log.info(f"New vocab size: {len(tokenizer)}")
 
@@ -47,8 +61,9 @@ def run(args: argparse.Namespace) -> None:
     # whole-token entry (e.g. "UNION SELECT" → "UNI", "##ON", …).
     # ------------------------------------------------------------------
     log.info("Running token shadowing analysis...")
-    shadow_report = check_token_shadowing(tokenizer, tok_a.http_tokens)
-    shadow_summary = summarise_shadowing(shadow_report)
+    with timer.step("shadowing_analysis"):
+        shadow_report  = check_token_shadowing(tokenizer, tok_a.http_tokens)
+        shadow_summary = summarise_shadowing(shadow_report)
 
     if shadow_summary["n_shadowed"] > 0:
         log.warning(
@@ -77,6 +92,7 @@ def run(args: argparse.Namespace) -> None:
             "summary": shadow_summary,
             "detail":  shadow_report,
         },
+        "timings_s": timer.timings,
     }
 
     out = Path(cfg.paths.reports) / "metrics" / "tokenizer_track_a.json"
@@ -100,6 +116,7 @@ def run(args: argparse.Namespace) -> None:
                 "total_checked":     float(shadow_summary.get("total_checked", 0)),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -107,6 +124,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Augment BERT vocab with HTTP tokens (Track A).")
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

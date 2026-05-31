@@ -7,9 +7,18 @@ import pyarrow.parquet as pq
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 log = get_logger(__name__)
 def run(args):
     configure_root(); cfg = load_config(args.config)
+    require_inputs({
+        f"{cfg.model.student.output_dir}/best_student.pt": "run 02_distill_train.py",
+        "data/splits/test.parquet": "make data_augment_all",
+    })
+    if check_output(Path(cfg.paths.reports) / "metrics" / "shap_analysis.json",
+                    args.force, "Stage 7.12 SHAP analysis"):
+        return
     try: import shap
     except ImportError: log.error("shap not installed: pip install shap"); return
     device    = torch.device("cpu")  # SHAP works on CPU
@@ -44,9 +53,11 @@ def run(args):
     test_malicious   = df[df["label"]==1]["raw"].tolist()[:20]
     bg_ids, _    = encode(background_texts)
     test_ids, _  = encode(test_malicious)
+    timer = StepTimer()
     log.info("Running KernelSHAP (this may take a few minutes)...")
-    explainer = shap.KernelExplainer(predict, bg_ids[:20])
-    shap_vals  = explainer.shap_values(test_ids[:5], nsamples=100)
+    with timer.step("kernel_shap"):
+        explainer = shap.KernelExplainer(predict, bg_ids[:20])
+        shap_vals  = explainer.shap_values(test_ids[:5], nsamples=100)
     # Map back to tokens
     results = []
     for i, text in enumerate(test_malicious[:5]):
@@ -77,9 +88,13 @@ def run(args):
                 "n_explained_samples": float(len(results)),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
 def parse_args():
-    p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true", help="Re-run even if outputs already exist")
+    return p.parse_args()
 if __name__ == "__main__": run(parse_args())

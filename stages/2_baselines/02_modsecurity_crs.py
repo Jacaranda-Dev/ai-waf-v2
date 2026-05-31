@@ -57,6 +57,8 @@ import torch
 from ai_waf_v2.eval.metrics import compute_metrics, compute_per_class_metrics
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -290,6 +292,12 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        "data/splits/test.parquet": "make baselines",
+    })
+    if check_output(Path(cfg.paths.reports) / "metrics" / "modsecurity_results.json", args.force, "Stage 2.2 ModSecurity CRS"):
+        return
+
     splits_dir  = Path(cfg.paths.data_splits)
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -304,6 +312,7 @@ def run(args: argparse.Namespace) -> None:
     labels  = table["label"].to_pylist()
     classes = table["attack_class"].to_pylist()
     log.info(f"Loaded {len(raws):,} test samples")
+    timer     = StepTimer()
 
     slos      = _load_slos(reports_dir)
     threshold = args.threshold or getattr(getattr(cfg, "slo", None), "crs_anomaly_threshold", 5)
@@ -326,9 +335,10 @@ def run(args: argparse.Namespace) -> None:
         model_key = f"modsecurity_crs_pl{pl}"
         n_active  = sum(1 for r in CRS_RULES if r.min_pl <= pl)
 
-        t0 = time.perf_counter()
-        results = [score_request(r, pl, threshold) for r in raws]
-        elapsed = time.perf_counter() - t0
+        with timer.step(f"evaluate_pl{pl}"):
+            t0 = time.perf_counter()
+            results = [score_request(r, pl, threshold) for r in raws]
+            elapsed = time.perf_counter() - t0
 
         preds  = [sr.prediction for sr in results]
         scores = [sr.score      for sr in results]
@@ -404,6 +414,7 @@ def run(args: argparse.Namespace) -> None:
                     mlflow_metrics[f"pl{pl}_rps"]    = float(lat.get("throughput_rps", 0))
             log_metrics_dict(mlflow_metrics)
             mlflow.log_artifact(str(baselines_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -434,6 +445,8 @@ def parse_args() -> argparse.Namespace:
                    help="Anomaly score threshold (default: cfg.slo.crs_anomaly_threshold or 5)")
     p.add_argument("--audit-log",      default=None,
                    help="Path to real ModSecurity audit log (bypasses heuristic engine)")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

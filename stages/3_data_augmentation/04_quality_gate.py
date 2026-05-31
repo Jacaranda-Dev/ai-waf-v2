@@ -1,8 +1,7 @@
 """
 stages/3_data_augmentation/11_quality_gate.py
 ---------------------------------------------
-Unified Quality Pipeline  (merges 11_format_validation, 12_tokenizer_coverage_check,
-13_semantic_dedup, 14_label_consistency)
+Unified Quality Pipeline  
 
 Four passes run in sequence, all controlled by a single Pipeline class:
 
@@ -15,11 +14,7 @@ Four passes run in sequence, all controlled by a single Pipeline class:
 Cross-augmentation leakage check: after filtering, verify no augmented record
 has Jaccard > 0.70 with test.parquet or canary.parquet (hard requirement).
 
-Enhancements over original scripts:
-  - ModSecurity-aligned heuristic (replaces divergent standalone regex)
-  - FormatValidator is stateless and runs in parallel across Parquet partitions
-  - Conflict-flagged benign edge-cases are kept but marked; pure conflicts are quarantined
-  - Leakage guard against test / canary splits
+
 
 Run:
     python stages/3_data_augmentation/11_quality_gate.py --config config/pipeline.yaml
@@ -42,6 +37,8 @@ from datasketch import MinHash, MinHashLSH
 from ai_waf_v2.data.schema import HttpRecord, PARQUET_SCHEMA
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -389,6 +386,15 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        "data/augmented/framed/framed_records.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.data_filtered) / "filtered.parquet",
+        args.force, "Stage 3.4 quality gate"
+    ):
+        return
+
     filt_cfg = cfg.augmentation.filtering
 
     # ── Load tokenizer ────────────────────────────────────────────────────
@@ -403,10 +409,13 @@ def run(args: argparse.Namespace) -> None:
     except FileNotFoundError:
         log.warning("Track B tokenizer not found — UNK coverage pass will be skipped")
 
+    timer = StepTimer()
+
     # ── Load data ─────────────────────────────────────────────────────────
     aug_dir   = Path(cfg.paths.data_augmented)
     base_path = Path(cfg.paths.data_normalized) / "deduped.parquet"
-    records   = _load_all_augmented(aug_dir, base_path)
+    with timer.step("load_data"):
+        records   = _load_all_augmented(aug_dir, base_path)
     if not records:
         log.error("No augmented records found — run Modules A, B, C first")
         return
@@ -417,7 +426,8 @@ def run(args: argparse.Namespace) -> None:
     holdout_paths = [splits_dir / "test.parquet", splits_dir / "canary.parquet"]
     holdout_lsh = None
     if any(p.exists() for p in holdout_paths):
-        holdout_lsh = _build_holdout_lsh(holdout_paths, threshold=0.70)
+        with timer.step("build_holdout_lsh"):
+            holdout_lsh = _build_holdout_lsh(holdout_paths, threshold=0.70)
 
     # ── Build pipeline ────────────────────────────────────────────────────
     pipeline = QualityPipeline(
@@ -428,7 +438,8 @@ def run(args: argparse.Namespace) -> None:
         holdout_lsh  = holdout_lsh,
     )
 
-    passed, rejected = pipeline.run(records, max_workers=args.workers)
+    with timer.step("quality_filter"):
+        passed, rejected = pipeline.run(records, max_workers=args.workers)
 
     # ── Write outputs ─────────────────────────────────────────────────────
     filtered_dir = Path(cfg.paths.data_filtered)
@@ -444,8 +455,9 @@ def run(args: argparse.Namespace) -> None:
             compression="snappy",
         )
 
-    _write(passed,                 "filtered.parquet")
-    _write([r for r, _ in rejected], "rejected.parquet")
+    with timer.step("parquet_write"):
+        _write(passed,                 "filtered.parquet")
+        _write([r for r, _ in rejected], "rejected.parquet")
 
     n_total    = len(records)
     n_passed   = len(passed)
@@ -474,6 +486,7 @@ def run(args: argparse.Namespace) -> None:
         "rejection_reasons": _count_reasons(rejected),
         "crs_heuristic":     "ModSecurity CRS aligned (paranoia level 1)",
         "leakage_threshold": 0.70,
+        "timings_s":         timer.timings,
     }
     sp = Path(cfg.paths.reports) / "metrics" / "quality_gate.json"
     sp.parent.mkdir(parents=True, exist_ok=True)
@@ -500,6 +513,7 @@ def run(args: argparse.Namespace) -> None:
                 metrics[f"rejected_{reason}"] = float(count)
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(sp))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -508,6 +522,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config",  default="config/pipeline.yaml")
     p.add_argument("--workers", type=int, default=4, help="Parallel workers for format/tokenizer passes")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

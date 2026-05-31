@@ -36,6 +36,8 @@ from ai_waf_v2.data.schema import HttpRecord
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -348,6 +350,16 @@ def _batch_predict(
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg    = load_config(args.config)
+
+    require_inputs({
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "novel_attack_generalization.json",
+        args.force, "Stage 7.6 novel attack generalization"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     tokenizer = HttpTokenizer.load(
@@ -367,58 +379,61 @@ def run(args: argparse.Namespace) -> None:
     n_samples = args.n_samples
     seed      = args.seed
     results: dict[str, dict] = {}
+    timer = StepTimer()
 
     log.info(
         f"Generating {n_samples} samples per attack class "
         f"(seed={seed}, {len(ATTACK_GRAMMARS)} classes)"
     )
 
-    for attack_name, grammar_fn in ATTACK_GRAMMARS.items():
-        rng = Rng(seed)   # fresh RNG per class for reproducibility
+    with timer.step("generate_and_evaluate"):
+        for attack_name, grammar_fn in ATTACK_GRAMMARS.items():
+            rng = Rng(seed)   # fresh RNG per class for reproducibility
 
-        # Generate variations
-        raw_texts = [grammar_fn(rng) for _ in range(n_samples)]
+            # Generate variations
+            raw_texts = [grammar_fn(rng) for _ in range(n_samples)]
 
-        # Deduplicate (grammar may occasionally produce identical strings)
-        unique_texts = list(dict.fromkeys(raw_texts))
-        if len(unique_texts) < n_samples:
-            log.debug(f"  {attack_name}: {n_samples - len(unique_texts)} duplicates removed")
+            # Deduplicate (grammar may occasionally produce identical strings)
+            unique_texts = list(dict.fromkeys(raw_texts))
+            if len(unique_texts) < n_samples:
+                log.debug(f"  {attack_name}: {n_samples - len(unique_texts)} duplicates removed")
 
-        # Inference
-        preds = _batch_predict(
-            model, unique_texts, tokenizer,
-            cfg.tokenizer.seq_len, device,
-        )
+            # Inference
+            preds = _batch_predict(
+                model, unique_texts, tokenizer,
+                cfg.tokenizer.seq_len, device,
+            )
 
-        n_detected = sum(preds)
-        n_total    = len(preds)
-        detection_rate = n_detected / max(1, n_total)
-        ci_low, ci_high = _wilson_ci(n_detected, n_total)
+            n_detected = sum(preds)
+            n_total    = len(preds)
+            detection_rate = n_detected / max(1, n_total)
+            ci_low, ci_high = _wilson_ci(n_detected, n_total)
 
-        # Analyse edge-case failures (samples not detected)
-        evasion_examples = [
-            unique_texts[i] for i, p in enumerate(preds) if p == 0
-        ][:5]   # at most 5 representative evasion examples
+            # Analyse edge-case failures (samples not detected)
+            evasion_examples = [
+                unique_texts[i] for i, p in enumerate(preds) if p == 0
+            ][:5]   # at most 5 representative evasion examples
 
-        results[attack_name] = {
-            "n_generated":      n_samples,
-            "n_unique":         n_total,
-            "n_detected":       n_detected,
-            "detection_rate":   round(detection_rate, 5),
-            "evasion_rate":     round(1 - detection_rate, 5),
-            "ci_95_low":        ci_low,
-            "ci_95_high":       ci_high,
-            "evasion_examples": evasion_examples,
-        }
+            results[attack_name] = {
+                "n_generated":      n_samples,
+                "n_unique":         n_total,
+                "n_detected":       n_detected,
+                "detection_rate":   round(detection_rate, 5),
+                "evasion_rate":     round(1 - detection_rate, 5),
+                "ci_95_low":        ci_low,
+                "ci_95_high":       ci_high,
+                "evasion_examples": evasion_examples,
+            }
 
-        log.info(
-            f"  {attack_name:28s}: detection={detection_rate:.4f}  "
-            f"CI=[{ci_low:.4f}, {ci_high:.4f}]  "
-            f"n={n_total}"
-        )
+            log.info(
+                f"  {attack_name:28s}: detection={detection_rate:.4f}  "
+                f"CI=[{ci_low:.4f}, {ci_high:.4f}]  "
+                f"n={n_total}"
+            )
 
     out = Path(cfg.paths.reports) / "metrics" / "novel_attack_generalization.json"
     out.parent.mkdir(parents=True, exist_ok=True)
+    results["timings_s"] = timer.timings
     out.write_text(json.dumps(results, indent=2))
     log.info(f"\nNovel attack generalisation saved to {out}")
 
@@ -445,6 +460,7 @@ def run(args: argparse.Namespace) -> None:
                 metrics["mean_detection_rate"] = float(sum(detection_rates) / len(detection_rates))
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -455,6 +471,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-samples", type=int, default=500,
                    help="Fuzzing variations per attack class (≥500 recommended)")
     p.add_argument("--seed",      type=int, default=42)
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

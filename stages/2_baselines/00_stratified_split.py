@@ -28,7 +28,9 @@ from sklearn.model_selection import train_test_split
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -37,6 +39,12 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
+
+    require_inputs({
+        "data/normalized/deduped.parquet": "make data_collect",
+    })
+    if check_output(Path(cfg.paths.data_splits) / "train.parquet", args.force, "Stage 2.0 stratified split"):
+        return
 
     # Try filtered data first; fall back to deduped
     filtered_path = Path(cfg.paths.data_filtered) / "filtered.parquet"
@@ -50,7 +58,10 @@ def run(args: argparse.Namespace) -> None:
     splits_dir = Path(cfg.paths.data_splits)
     splits_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pq.read_table(in_path).to_pandas()
+    timer = StepTimer()
+
+    with timer.step("load_parquet"):
+        df = pq.read_table(in_path).to_pandas()
     log.info(f"Loaded {len(df):,} records from {in_path.name}")
 
     # Stratification key: label + attack_class
@@ -60,31 +71,32 @@ def run(args: argparse.Namespace) -> None:
     random_seed = cfg.project.seed
 
     # Sequential splits using sklearn train_test_split
-    # Step 1: carve out canary (2%) from the full set
-    df_main, df_canary, fb_canary = _stratified_split(
-        df, test_size=scfg.canary, seed=random_seed
-    )
+    with timer.step("stratified_split"):
+        # Step 1: carve out canary (2%) from the full set
+        df_main, df_canary, fb_canary = _stratified_split(
+            df, test_size=scfg.canary, seed=random_seed
+        )
 
-    # Step 2: carve out adversarial holdout (3%) from remaining
-    remaining_total = scfg.train + scfg.val + scfg.test + scfg.adversarial
-    adv_frac_of_remaining = scfg.adversarial / remaining_total
-    df_main, df_adversarial, fb_adversarial = _stratified_split(
-        df_main, test_size=adv_frac_of_remaining, seed=random_seed
-    )
+        # Step 2: carve out adversarial holdout (3%) from remaining
+        remaining_total = scfg.train + scfg.val + scfg.test + scfg.adversarial
+        adv_frac_of_remaining = scfg.adversarial / remaining_total
+        df_main, df_adversarial, fb_adversarial = _stratified_split(
+            df_main, test_size=adv_frac_of_remaining, seed=random_seed
+        )
 
-    # Step 3: test split
-    remaining_total2 = scfg.train + scfg.val + scfg.test
-    test_frac = scfg.test / remaining_total2
-    df_main, df_test, fb_test  = _stratified_split(
-        df_main, test_size=test_frac, seed=random_seed
-    )
+        # Step 3: test split
+        remaining_total2 = scfg.train + scfg.val + scfg.test
+        test_frac = scfg.test / remaining_total2
+        df_main, df_test, fb_test  = _stratified_split(
+            df_main, test_size=test_frac, seed=random_seed
+        )
 
-    # Step 4: val split
-    remaining_total3 = scfg.train + scfg.val
-    val_frac = scfg.val / remaining_total3
-    df_train, df_val, fb_val = _stratified_split(
-        df_main, test_size=val_frac, seed=random_seed
-    )
+        # Step 4: val split
+        remaining_total3 = scfg.train + scfg.val
+        val_frac = scfg.val / remaining_total3
+        df_train, df_val, fb_val = _stratified_split(
+            df_main, test_size=val_frac, seed=random_seed
+        )
 
     splits = {
         "train":      df_train,
@@ -112,33 +124,34 @@ def run(args: argparse.Namespace) -> None:
 
     
 
-    for split_name, split_df in splits.items():
-        # Tag the split column
-        split_df = split_df.drop(columns=["_strat_key"], errors="ignore").copy()
-        split_df["split"] = split_name
+    with timer.step("parquet_write"):
+        for split_name, split_df in splits.items():
+            # Tag the split column
+            split_df = split_df.drop(columns=["_strat_key"], errors="ignore").copy()
+            split_df["split"] = split_name
 
-        out_path = splits_dir / f"{split_name}.parquet"
-        pq.write_table(
-            pa.Table.from_pandas(split_df, preserve_index=False),
-            out_path,
-            compression="snappy",
-        )
+            out_path = splits_dir / f"{split_name}.parquet"
+            pq.write_table(
+                pa.Table.from_pandas(split_df, preserve_index=False),
+                out_path,
+                compression="snappy",
+            )
 
-        n_total    = len(split_df)
-        n_benign   = (split_df["label"] == 0).sum()
-        n_malicious = (split_df["label"] == 1).sum()
+            n_total    = len(split_df)
+            n_benign   = (split_df["label"] == 0).sum()
+            n_malicious = (split_df["label"] == 1).sum()
 
-        split_stats[split_name] = {
-            "n_total":      int(n_total),
-            "n_benign":     int(n_benign),
-            "n_malicious":  int(n_malicious),
-            "imbalance_ratio": round(n_benign / max(1, n_malicious), 2),
-            "attack_class_counts": split_df["attack_class"].value_counts().to_dict(),
-        }
-        log.info(
-            f"  {split_name:12s}: {n_total:>7,} "
-            f"(benign={n_benign:,}, malicious={n_malicious:,})"
-        )
+            split_stats[split_name] = {
+                "n_total":      int(n_total),
+                "n_benign":     int(n_benign),
+                "n_malicious":  int(n_malicious),
+                "imbalance_ratio": round(n_benign / max(1, n_malicious), 2),
+                "attack_class_counts": split_df["attack_class"].value_counts().to_dict(),
+            }
+            log.info(
+                f"  {split_name:12s}: {n_total:>7,} "
+                f"(benign={n_benign:,}, malicious={n_malicious:,})"
+            )
 
     stats_meta = {
         "fallback_splits": fallback_splits,          # [] means fully stratified
@@ -147,7 +160,7 @@ def run(args: argparse.Namespace) -> None:
     # Save stats
     stats_path = Path(cfg.paths.reports) / "metrics" / "split_stats.json"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
-    stats_path.write_text(json.dumps({**split_stats, "_meta": stats_meta}, indent=2))
+    stats_path.write_text(json.dumps({**split_stats, "_meta": stats_meta, "timings_s": timer.timings}, indent=2))
     log.info(f"Split stats saved to {stats_path}")
 
     try:
@@ -171,6 +184,7 @@ def run(args: argparse.Namespace) -> None:
                 metrics[f"{split_name}_imbalance"]  = float(info["imbalance_ratio"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(stats_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -207,6 +221,8 @@ def _stratified_split(
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

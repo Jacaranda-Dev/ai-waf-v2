@@ -24,6 +24,8 @@ from transformers import AutoTokenizer
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 from tokenizer_eval import compute_full_metrics, stratified_sample
 
@@ -35,6 +37,16 @@ EVAL_SAMPLE_SIZE = 5_000
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
+
+    require_inputs({
+        f"{cfg.tokenizer.track_a.output_dir}/tokenizer_config.json": "run 01_augment_pretrained_vocab.py",
+        "data/splits/val.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "tokenizer_oov_track_a.json",
+        args.force, "Stage 4.2 Track A OOV measurement"
+    ):
+        return
 
     # ------------------------------------------------------------------
     # Load Track A tokenizer
@@ -48,6 +60,7 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
+    timer     = StepTimer()
     tokenizer = AutoTokenizer.from_pretrained(str(track_a_dir))
     log.info(f"Loaded Track A tokenizer (vocab_size={len(tokenizer)})")
 
@@ -77,12 +90,13 @@ def run(args: argparse.Namespace) -> None:
     # Compute unified metrics
     # ------------------------------------------------------------------
     seq_len = cfg.tokenizer.seq_len
-    result  = compute_full_metrics(
-        tokenizer, texts, labels,
-        seq_len=seq_len,
-        unk_token="[UNK]",
-        track_name="track_a",
-    )
+    with timer.step("compute_metrics"):
+        result  = compute_full_metrics(
+            tokenizer, texts, labels,
+            seq_len=seq_len,
+            unk_token="[UNK]",
+            track_name="track_a",
+        )
 
     log.info(
         f"Track A | oov={result['oov_rate']:.4f}  "
@@ -102,6 +116,7 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     out = Path(cfg.paths.reports) / "metrics" / "tokenizer_oov_track_a.json"
     out.parent.mkdir(parents=True, exist_ok=True)
+    result["timings_s"] = timer.timings
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Track A evaluation report saved to {out}")
 
@@ -123,6 +138,7 @@ def run(args: argparse.Namespace) -> None:
                 "subword_char_ratio": float(result["subword_char_ratio"]),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -130,6 +146,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate Track A tokenizer metrics.")
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

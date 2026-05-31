@@ -71,11 +71,15 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from urllib.error import URLError
 
-from ai_waf_v2.data.schema import HttpRecord, PARQUET_SCHEMA, records_to_table
+from ai_waf_v2.data.schema import (
+    HttpRecord, PARQUET_SCHEMA, records_to_table,
+    CLASS_ALIASES, canonical_class as _canonical_class,
+)
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -103,34 +107,6 @@ WRITE_BATCH_SIZE = 10_000
 # adding a new dataset requires changes in exactly one file.
 # ─────────────────────────────────────────────────────────
 
-CLASS_ALIASES: dict[str, str] = {
-    # SQL injection
-    "sql injection": "sqli", "sql_injection": "sqli", "sqli": "sqli",
-    # XSS
-    "cross-site scripting": "xss", "cross_site_scripting": "xss", "xss": "xss",
-    # File inclusion
-    "local file inclusion": "lfi", "lfi": "lfi",
-    "remote file inclusion": "rfi", "rfi": "rfi",
-    # SSRF / injection variants
-    "server-side request forgery": "ssrf", "ssrf": "ssrf",
-    "command injection": "cmdi", "cmd injection": "cmdi", "cmdi": "cmdi",
-    "xml external entity": "xxe", "xxe": "xxe",
-    "server-side template injection": "ssti", "ssti": "ssti",
-    # Path / header manipulation
-    "path traversal": "path_traversal", "directory traversal": "path_traversal",
-    "header injection": "header_injection",
-    # Benign
-    "normal": "benign", "legitimate": "benign", "benign": "benign",
-    # Ambiguous — kept as "unknown" (not "malicious") so downstream
-    # classifiers are not given a noisy super-label.
-    "anomalous": "unknown", "attack": "unknown", "malicious": "unknown",
-    "unknown": "unknown",
-}
-
-
-def _canonical_class(raw: str) -> str:
-    """Map any noisy attack-class string to its canonical form."""
-    return CLASS_ALIASES.get(str(raw).lower().strip(), str(raw).lower().strip())
 
 
 def _Normalize_record(record: HttpRecord) -> HttpRecord | None:
@@ -441,9 +417,33 @@ def _convert_sr_bh_v1(extract_dir: Path, out_path: Path) -> int:
     return len(df)
 
 
+def _convert_http_params_v1(extract_dir: Path, out_path: Path) -> int:
+    """HTTP Params Dataset: concatenate all CSVs from the archive and save as-is."""
+    csv_files = list(extract_dir.rglob("*.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in {extract_dir} for HTTP Params Dataset.")
+
+    dfs = []
+    for p in sorted(csv_files):
+        try:
+            dfs.append(pd.read_csv(p, low_memory=False))
+        except Exception as e:
+            log.warning(f"  Could not read {p.name}: {e}")
+
+    if not dfs:
+        raise RuntimeError("All HTTP Params CSV files failed to load.")
+
+    df = pd.concat(dfs, ignore_index=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    log.info(f"  HTTP Params converter: {len(df):,} rows")
+    return len(df)
+
+
 CONVERTER_REGISTRY: dict[str, Callable[[Path, Path], int]] = {
-    "csic_v1":      _convert_csic_v1,
-    "sr_bh_v1":     _convert_sr_bh_v1,
+    "csic_v1":          _convert_csic_v1,
+    "sr_bh_v1":         _convert_sr_bh_v1,
+    "http_params_v1":   _convert_http_params_v1,
 }
 
 
@@ -613,9 +613,110 @@ def _adapt_sr_bh_v1(
         except Exception as e:
             log.debug(f"Parse error ({source_name}): {e}")
 
+# HTTP envelope for wrapping bare parameter payloads: canonical_class → (method, path, param_name)
+_HTTP_PARAMS_ENVELOPE: dict[str, tuple[str, str, str]] = {
+    "sqli":             ("GET",  "/search",   "q"),
+    "xss":              ("GET",  "/search",   "q"),
+    "lfi":              ("GET",  "/view",     "file"),
+    "rfi":              ("GET",  "/include",  "file"),
+    "cmdi":             ("GET",  "/exec",     "cmd"),
+    "path_traversal":   ("GET",  "/download", "path"),
+    "ssrf":             ("GET",  "/fetch",    "url"),
+    "header_injection": ("POST", "/submit",   "data"),
+    "ssti":             ("GET",  "/render",   "template"),
+    "xxe":              ("POST", "/api/xml",  "data"),
+    "benign":           ("GET",  "/search",   "q"),
+    "unknown":          ("GET",  "/search",   "q"),
+}
+
+
+def _adapt_http_params_v1(
+    csv_path:    Path,
+    label_col:   str,
+    source_name: str,
+) -> Iterator[HttpRecord]:
+    """
+    HTTP Params Dataset adapter.
+
+    The payload column (sentence/payload) contains a raw attack or benign string.
+    Each value is wrapped in a synthetic HTTP request envelope (GET query param or
+    POST form body) chosen by canonical attack class so the tokenizer sees
+    realistic HTTP structure.
+    """
+    df = pd.read_csv(csv_path, low_memory=False)
+
+    payload_col = next(
+        (c for c in ("sentence", "Sentence", "payload", "Payload",
+                     "text", "Text", "request", "Request")
+         if c in df.columns),
+        None,
+    )
+    if payload_col is None:
+        raise ValueError(
+            f"HTTP Params adapter: no payload column found. Columns: {list(df.columns)}"
+        )
+
+    type_col = next(
+        (c for c in ("type", "Type", "attack_type", "attack_class",
+                     "category", "Category", "class", "Class")
+         if c in df.columns),
+        None,
+    )
+
+    actual_label_col = label_col if label_col in df.columns else _find_label_col(df)
+    labels   = _extract_label(df[actual_label_col])
+    payloads = df[payload_col].fillna("").astype(str).tolist()
+    raw_types = (
+        df[type_col].fillna("").astype(str).str.lower().str.strip().tolist()
+        if type_col else ["benign" if lbl == 0 else "unknown" for lbl in labels]
+    )
+
+    for payload, lbl, raw_type in zip(payloads, labels, raw_types):
+        payload = payload.strip()
+        if not payload:
+            continue
+
+        canonical = _canonical_class(raw_type) if raw_type else ("benign" if lbl == 0 else "unknown")
+        method, path, param = _HTTP_PARAMS_ENVELOPE.get(
+            canonical, _HTTP_PARAMS_ENVELOPE["unknown"]
+        )
+
+        if method == "GET":
+            record = HttpRecord(
+                method=method,
+                path=path,
+                query_string=f"{param}={payload}",
+                headers=json.dumps({"Host": "localhost", "Accept": "*/*"}),
+                body="",
+                label=lbl,
+                attack_class=canonical,
+                source=source_name,
+            )
+        else:
+            record = HttpRecord(
+                method=method,
+                path=path,
+                query_string="",
+                headers=json.dumps({
+                    "Host": "localhost",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }),
+                body=f"{param}={payload}",
+                label=lbl,
+                attack_class=canonical,
+                source=source_name,
+            )
+
+        try:
+            yield record.build_raw()
+        except Exception as e:
+            log.debug(f"Build error ({source_name}): {e}")
+
+
 ADAPTER_REGISTRY: dict[str, Callable[[Path, str, str], Iterator[HttpRecord]]] = {
     "csic_v1":          _adapt_csic_v1,
     "sr_bh_v1":         _adapt_sr_bh_v1,
+    "http_params_v1":   _adapt_http_params_v1,
 }
 
 
@@ -893,6 +994,7 @@ def run(args: argparse.Namespace) -> None:
     configure_root() # for logging
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
+    timer = StepTimer()
 
     raw_dir        = Path(cfg.paths.data_raw)
     normalized_dir = Path(cfg.paths.data_normalized)
@@ -959,12 +1061,13 @@ def run(args: argparse.Namespace) -> None:
         log.info(f"{' '*8}==== Phase 1/2 — Acquire (download → CSV)")
         # Phase 1 — Acquire (download → CSV)
         try:
-            acq_entry = acquire_csv(
-                spec    = spec,
-                raw_dir = raw_dir,
-                verify  = not args.no_verify,
-                force   = args.force,
-            )
+            with timer.step(f"acquire_{spec.name}"):
+                acq_entry = acquire_csv(
+                    spec    = spec,
+                    raw_dir = raw_dir,
+                    verify  = not args.no_verify,
+                    force   = args.force,
+                )
             manifest.append(acq_entry)
         except Exception as exc:
             log.error(f"[{spec.name}] Acquisition failed: {exc}")
@@ -997,15 +1100,13 @@ def run(args: argparse.Namespace) -> None:
 
         log.info(f"  Ingesting + normalising [{spec.name}] …")
         try:
-            # _normalized_record_iter wraps the raw adapter output.
-            # This is the only change from the original ingestion path:
-            # normalisation happens in the generator, not in a second script.
-            raw_iter        = spec.adapter(csv_path, spec.label_col, spec.name)
-            canonical_iter  = _normalized_record_iter(raw_iter)
-            n_total, n_benign, n_malicious = _write_batched(
-                record_iter = canonical_iter,
-                out_path    = parquet_out,
-            )
+            with timer.step(f"normalize_{spec.name}"):
+                raw_iter        = spec.adapter(csv_path, spec.label_col, spec.name)
+                canonical_iter  = _normalized_record_iter(raw_iter)
+                n_total, n_benign, n_malicious = _write_batched(
+                    record_iter = canonical_iter,
+                    out_path    = parquet_out,
+                )
         except Exception as exc:
             log.error(f"[{spec.name}] Ingestion failed: {exc}")
             per_dataset_stats[spec.name] = {"error": str(exc)}
@@ -1034,9 +1135,10 @@ def run(args: argparse.Namespace) -> None:
                 log.warning(f"  Could not read {p.name} for merge: {e}")
 
         if tables:
-            merged      = pa.concat_tables(tables)
-            merged_path = normalized_dir / "all_datasets.parquet"
-            pq.write_table(merged, merged_path, compression="snappy")
+            with timer.step("merge_parquets"):
+                merged      = pa.concat_tables(tables)
+                merged_path = normalized_dir / "all_datasets.parquet"
+                pq.write_table(merged, merged_path, compression="snappy")
             total     = merged.num_rows
             benign    = int(pc.sum(pc.equal(merged["label"], 0)).as_py()) 
             malicious = total - benign
@@ -1072,6 +1174,7 @@ def run(args: argparse.Namespace) -> None:
         "total":       total,
         "benign":      benign,
         "malicious":   malicious,
+        "timings_s":   timer.timings,
     }, indent=2))
 
     log.info(
@@ -1102,6 +1205,7 @@ def run(args: argparse.Namespace) -> None:
                         {k: float(v) for k, v in ds_stats.items()},
                         prefix=f"{ds_name}/",
                     )
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True) 
 

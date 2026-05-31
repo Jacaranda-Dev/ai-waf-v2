@@ -49,6 +49,8 @@ from ai_waf_v2.eval.latency import LatencyBenchmark, OnnxLatencyBenchmark
 from ai_waf_v2.models.student import StudentClassifier
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -255,6 +257,15 @@ def run(args: argparse.Namespace) -> None:
     vocab_size  = student_cfg.vocab_size
     batch_sizes = cfg.evaluation.batch_sizes
 
+    require_inputs({
+        f"{student_cfg.output_dir}/best_student.pt": "run 02_distill_train.py",
+    })
+    if check_output(
+        Path(student_cfg.output_dir) / "student.onnx",
+        args.force, "Stage 6.5 export and bench"
+    ):
+        return
+
     # ── Canary gate guard ─────────────────────────
     canary_report = Path(cfg.paths.reports) / "metrics" / "student_canary.json"
     if canary_report.exists():
@@ -285,6 +296,7 @@ def run(args: argparse.Namespace) -> None:
 
     onnx_path = Path(student_cfg.output_dir) / "student.onnx"
     trt_path  = Path(student_cfg.output_dir) / "student.engine"
+    timer     = StepTimer()
 
     # ── 1. PyTorch baseline ───────────────────────
     log.info("\n── PyTorch Baseline ──────────────────────────────")
@@ -293,12 +305,14 @@ def run(args: argparse.Namespace) -> None:
         seq_len=seq_len, vocab_size=vocab_size,
         n_warmup=50, n_runs=200, use_bf16=True,
     )
-    pt_results = pt_bench.run(batch_sizes)
+    with timer.step("benchmark_pytorch"):
+        pt_results = pt_bench.run(batch_sizes)
     LatencyBenchmark.print_table(pt_results)
 
     # ── 2. ONNX export ────────────────────────────
     log.info("\n── ONNX Export ───────────────────────────────────")
-    export_onnx(student, onnx_path, seq_len, vocab_size, device)
+    with timer.step("export_onnx"):
+        export_onnx(student, onnx_path, seq_len, vocab_size, device)
 
     # ── 3. ORT CUDA benchmark ─────────────────────
     log.info("\n── ORT: CUDAExecutionProvider ────────────────────")
@@ -310,7 +324,8 @@ def run(args: argparse.Namespace) -> None:
             n_warmup=cfg.evaluation.n_latency_warmup,
             n_runs=cfg.evaluation.n_latency_runs,
         )
-        ort_cuda_results = cuda_bench.run(batch_sizes)
+        with timer.step("benchmark_ort_cuda"):
+            ort_cuda_results = cuda_bench.run(batch_sizes)
         LatencyBenchmark.print_table(ort_cuda_results)
     except Exception as e:
         log.warning(f"ORT CUDA benchmark failed: {e}")
@@ -325,7 +340,8 @@ def run(args: argparse.Namespace) -> None:
             n_warmup=max(cfg.evaluation.n_latency_warmup // 2, 10),
             n_runs=cfg.evaluation.n_latency_runs,
         )
-        ort_cpu_results = cpu_bench.run(batch_sizes)
+        with timer.step("benchmark_ort_cpu"):
+            ort_cpu_results = cpu_bench.run(batch_sizes)
         LatencyBenchmark.print_table(ort_cpu_results)
     except Exception as e:
         log.warning(f"ORT CPU benchmark failed: {e}")
@@ -333,12 +349,14 @@ def run(args: argparse.Namespace) -> None:
     # ── 5. TensorRT build + benchmark ─────────────
     log.info("\n── TensorRT Engine ───────────────────────────────")
     trt_results: list[dict] = []
-    trt_built = build_trt_engine(onnx_path, trt_path, workspace_gb=2)
+    with timer.step("build_trt"):
+        trt_built = build_trt_engine(onnx_path, trt_path, workspace_gb=2)
     if trt_built:
-        trt_results = bench_trt(
-            trt_path, seq_len, batch_sizes,
-            n_warmup=20, n_runs=100,
-        )
+        with timer.step("benchmark_trt"):
+            trt_results = bench_trt(
+                trt_path, seq_len, batch_sizes,
+                n_warmup=20, n_runs=100,
+            )
 
     # ── 6. SLO enforcement ────────────────────────
     log.info("\n── SLO Enforcement ───────────────────────────────")
@@ -397,6 +415,7 @@ def run(args: argparse.Namespace) -> None:
             "onnx":      str(onnx_path),
             "trt_engine": str(trt_path) if trt_built else None,
         },
+        "timings_s": timer.timings,
     }
     summary_path = report_dir / "latency_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
@@ -433,6 +452,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"throughput_{provider_key}"] = float(bs1["throughput"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(summary_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -452,6 +472,8 @@ def parse_args() -> argparse.Namespace:
         description="Unified ONNX/TRT export and SLO-enforced benchmarking."
     )
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

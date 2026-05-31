@@ -42,6 +42,8 @@ import torch
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -223,6 +225,7 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
     import pandas as pd
     import pyarrow.parquet as pq
 
+    timer = StepTimer()
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -277,8 +280,9 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
     # ── LR probe comparison ──────────────────────────────────────────────────
     if train_texts and tok_a_ok and tok_b_ok:
         log.info("\n── LR Probe ──")
-        probe_a = _run_lr_probe(train_texts, train_labels, val_texts, val_labels)
-        probe_b = _run_lr_probe(train_texts, train_labels, val_texts, val_labels)
+        with timer.step("lr_probe"):
+            probe_a = _run_lr_probe(train_texts, train_labels, val_texts, val_labels)
+            probe_b = _run_lr_probe(train_texts, train_labels, val_texts, val_labels)
         results["lr_probe_track_a"] = probe_a
         results["lr_probe_track_b"] = probe_b
         log.info(f"  Probe A: {probe_a}")
@@ -295,15 +299,17 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
             # WafDataset pipeline; Track A tokenizer differences are captured in
             # the probe's TF-IDF vocabulary, not the raw texts).
             log.info("  Running Track A anchor...")
-            anchor_a = _run_anchor_transformer(
-                cfg, "track_a", tok_b, train_texts, train_labels,
-                val_texts, val_labels, anchor_epochs, anchor_sample_frac, seed,
-            )
+            with timer.step("anchor_track_a"):
+                anchor_a = _run_anchor_transformer(
+                    cfg, "track_a", tok_b, train_texts, train_labels,
+                    val_texts, val_labels, anchor_epochs, anchor_sample_frac, seed,
+                )
             log.info("  Running Track B anchor...")
-            anchor_b = _run_anchor_transformer(
-                cfg, "track_b", tok_b, train_texts, train_labels,
-                val_texts, val_labels, anchor_epochs, anchor_sample_frac, seed,
-            )
+            with timer.step("anchor_track_b"):
+                anchor_b = _run_anchor_transformer(
+                    cfg, "track_b", tok_b, train_texts, train_labels,
+                    val_texts, val_labels, anchor_epochs, anchor_sample_frac, seed,
+                )
 
         if anchor_a and anchor_b:
             results["anchor_track_a"] = anchor_a
@@ -335,6 +341,7 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
             if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
                 log.info(f"  {k}: A={va:.4f}  B={vb:.4f}  winner={'B' if vb < va else 'A'}")
 
+    results["timings_s"] = timer.timings
     out = reports_dir / "tokenizer_ablation.json"
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Tokenizer ablation saved to {out}")
@@ -368,6 +375,7 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
                             metrics[f"{probe_key}_{m_key}"] = float(val)
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -381,6 +389,15 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
+    require_inputs({
+        "data/splits/val.parquet": "make data_augment_all",
+        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json": "run 03_train_custom_bpe.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "tokenizer_ablation.json",
+        args.force, "Stage 7.7 tokenizer ablation"
+    ):
+        return
     tokenizer_ablation(
         cfg,
         anchor_epochs=args.anchor_epochs,
@@ -397,6 +414,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--anchor-sample-frac", type=float, default=0.20,
                    help="Fraction of training data for anchor run (default 0.20)")
     p.add_argument("--seed",               type=int,   default=42)
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

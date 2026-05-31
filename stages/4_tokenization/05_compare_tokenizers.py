@@ -26,6 +26,8 @@ from transformers import AutoTokenizer
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 from tokenizer_eval import (
     build_comparison_report,
@@ -106,6 +108,16 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        f"{cfg.tokenizer.track_a.output_dir}/tokenizer_config.json": "run 01_augment_pretrained_vocab.py",
+        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json":        "run 03_train_custom_bpe.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "tokenizer_comparison.json",
+        args.force, "Stage 4.5 tokenizer comparison"
+    ):
+        return
+
     track_a_dir  = Path(cfg.tokenizer.track_a.output_dir)
     track_b_dir  = Path(cfg.tokenizer.track_b.output_dir)
     reports_dir  = Path(cfg.paths.reports) / "metrics"
@@ -124,6 +136,7 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Load tokenizers
     # ------------------------------------------------------------------
+    timer = StepTimer()
     tok_a = AutoTokenizer.from_pretrained(str(track_a_dir))
     tok_b = HttpTokenizer.load(str(track_b_dir), cfg.tokenizer.seq_len)
     log.info(
@@ -163,8 +176,9 @@ def run(args: argparse.Namespace) -> None:
             seed=cfg.project.seed,
         )
         seq_len  = cfg.tokenizer.seq_len
-        metrics_a = compute_full_metrics(tok_a, texts, labels, seq_len, track_name="track_a")
-        metrics_b = compute_full_metrics(tok_b, texts, labels, seq_len, track_name="track_b")
+        with timer.step("compute_metrics"):
+            metrics_a = compute_full_metrics(tok_a, texts, labels, seq_len, track_name="track_a")
+            metrics_b = compute_full_metrics(tok_b, texts, labels, seq_len, track_name="track_b")
 
     # ------------------------------------------------------------------
     # Inject vocab sets for Jaccard computation
@@ -178,7 +192,8 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Build comparison report
     # ------------------------------------------------------------------
-    comparison = build_comparison_report(metrics_a, metrics_b)
+    with timer.step("build_comparison"):
+        comparison = build_comparison_report(metrics_a, metrics_b)
 
     # Attach shadowing summary from script 01 if available
     shadow_path = reports_dir / "tokenizer_track_a.json"
@@ -194,6 +209,7 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Persist
     # ------------------------------------------------------------------
+    comparison["timings_s"] = timer.timings
     out = reports_dir / "tokenizer_comparison.json"
     out.write_text(json.dumps(comparison, indent=2))
     log.info(f"Full comparison report saved to {out}")
@@ -220,6 +236,7 @@ def run(args: argparse.Namespace) -> None:
                 metrics["vocab_jaccard_overlap"] = float(comparison["vocab_jaccard_overlap"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -232,6 +249,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore cached metric files and recompute from scratch.",
     )
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

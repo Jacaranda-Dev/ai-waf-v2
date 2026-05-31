@@ -31,6 +31,9 @@ Run:
 
     # skip MinHash (exact dedup only) — useful for quick smoke-tests:
     python ... --exact-only
+
+    # force re-dedup even if deduped.parquet already exists:
+    python ... --force-dedup
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from datasketch import MinHash, MinHashLSH
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -286,20 +290,35 @@ def run(args: argparse.Namespace) -> None:
         log.error(f"Input not found: {in_path} — run 01_acquire_and_normalize.py first")
         return
 
+    if out_path.exists() and not args.force_dedup:
+        try:
+            n_rows = pq.read_metadata(out_path).num_rows
+        except Exception:
+            n_rows = 0
+        if n_rows > 0:
+            log.info(
+                f"Deduped file exists ({n_rows:,} rows) — skipping. "
+                "Use --force-dedup to re-run."
+            )
+            return
+
     table  = pq.read_table(in_path)
     n_orig = len(table)
     log.info(f"Loaded {n_orig:,} records for deduplication")
+    timer  = StepTimer()
 
     # ── Pass 1: exact hash ───────────────────────────────────────────────────
-    table, removed_exact, exact_samples = _exact_dedup(table)
-    n_after_exact                       = len(table)
+    with timer.step("exact_dedup"):
+        table, removed_exact, exact_samples = _exact_dedup(table)
+    n_after_exact = len(table)
 
     # ── Pass 2: MinHash LSH (optional) ──────────────────────────────────────
     removed_minhash  = 0
     minhash_samples: list[dict] = []
     if not args.exact_only:
         threshold = args.threshold or cfg.data.dedup.minhash_threshold
-        table, removed_minhash, minhash_samples = _minhash_dedup(table, threshold)
+        with timer.step("minhash_dedup"):
+            table, removed_minhash, minhash_samples = _minhash_dedup(table, threshold)
     else:
         log.info("Pass 2: skipped (--exact-only)")
         threshold = None
@@ -312,7 +331,8 @@ def run(args: argparse.Namespace) -> None:
 
     # ── Write output ─────────────────────────────────────────────────────────
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, out_path, compression="snappy")
+    with timer.step("parquet_write"):
+        pq.write_table(table, out_path, compression="snappy")
     log.info(f"Wrote {n_final:,} records → {out_path}")
 
     # ── Persist stats ─────────────────────────────────────────────────────────
@@ -326,6 +346,7 @@ def run(args: argparse.Namespace) -> None:
         "dedup_rate":          round((n_orig - n_final) / max(1, n_orig), 4),
         "minhash_threshold":   threshold,
         "exact_only":          args.exact_only,
+        "timings_s":           timer.timings,
     }
     stats_path = Path(cfg.paths.reports) / "metrics" / "dedup_stats.json"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
@@ -391,6 +412,7 @@ def run(args: argparse.Namespace) -> None:
 
             mlflow.log_artifact(str(stats_path))
             mlflow.log_artifact(str(samples_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -411,6 +433,11 @@ def parse_args() -> argparse.Namespace:
         "--exact-only",
         action="store_true",
         help="Run only SHA-256 exact dedup; skip the MinHash LSH pass",
+    )
+    p.add_argument(
+        "--force-dedup",
+        action="store_true",
+        help="Re-run deduplication even if deduped.parquet already exists",
     )
     return p.parse_args()
 

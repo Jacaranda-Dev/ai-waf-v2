@@ -46,8 +46,11 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from ai_waf_v2.data.schema import canonical_class
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -156,12 +159,14 @@ def _report_taxonomy_inventory(
     """
     log.info("Section: taxonomy_inventory")
 
-    min_samples = cfg.data.augmentation.min_samples_per_class  
+    min_samples = cfg.augmentation.min_samples_per_class
 
-
-    malicious       = df[df["label"] == 1]
-    class_counts    = Counter(df["attack_class"].tolist())
-    source_counts   = Counter(df["source"].tolist())
+    # Canonicalize raw class names (e.g. SR-BH "injection" → "unknown")
+    # before counting so the inventory keys match GRAMMAR_REGISTRY.
+    canonical_classes = df["attack_class"].map(canonical_class)
+    malicious         = df[df["label"] == 1]
+    class_counts      = Counter(canonical_classes.tolist())
+    source_counts     = Counter(df["source"].tolist())
 
     required  = set(cfg.data.data_schema.attack_classes) 
     present   = {cls for cls, cnt in class_counts.items() if cls != "benign" and cnt > 0}
@@ -221,7 +226,7 @@ def _report_taxonomy_coverage(
     log.info("Section: taxonomy_coverage")
 
     malicious = df[df["label"] == 1]
-    required  = set(cfg.data.schema.attack_classes)
+    required  = set(cfg.data.data_schema.attack_classes)
     present   = set(malicious["attack_class"].unique())
 
     # Build matrix: source → {attack_class: count}
@@ -322,7 +327,7 @@ def _report_datasheet(cfg, reports_dir: Path) -> dict[str, Any]:
         "composition": {
             "instances":   "HTTP/1.1 request records",
             "labels":      {"0": "benign", "1": "malicious"},
-            "attack_classes":        cfg.data.schema.attack_classes,
+            "attack_classes":        cfg.data.data_schema.attack_classes,
             "sources":               [d.name for d in cfg.data.datasets],
             "augmentation_methods": [
                 "rule-based mutations",
@@ -373,6 +378,12 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        "data/normalized/deduped.parquet": "make data_collect",
+    })
+    if check_output(Path(cfg.paths.reports) / "metrics" / "corpus_report.json", args.force, "Stage 1.3 corpus report"):
+        return
+
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -389,10 +400,12 @@ def run(args: argparse.Namespace) -> None:
     # without touching `df`.
     needs_df = sections - {"datasheet"}
     df: pd.DataFrame | None = None
+    timer    = StepTimer()
 
     if needs_df:
         try:
-            df = _load_corpus(cfg)
+            with timer.step("load_corpus"):
+                df = _load_corpus(cfg)
         except FileNotFoundError as exc:
             log.error(str(exc))
             return
@@ -402,19 +415,24 @@ def run(args: argparse.Namespace) -> None:
     log.info("─" * 60)
 
     if "dataset_analysis" in sections and df is not None:
-        _report_dataset_analysis(df, reports_dir)
+        with timer.step("dataset_analysis"):
+            _report_dataset_analysis(df, reports_dir)
 
     if "taxonomy_inventory" in sections and df is not None:
-        _report_taxonomy_inventory(df, cfg, reports_dir)
+        with timer.step("taxonomy_inventory"):
+            _report_taxonomy_inventory(df, cfg, reports_dir)
 
     if "taxonomy_coverage" in sections and df is not None:
-        _report_taxonomy_coverage(df, cfg, reports_dir)
+        with timer.step("taxonomy_coverage"):
+            _report_taxonomy_coverage(df, cfg, reports_dir)
 
     if "length_distribution" in sections and df is not None:
-        _report_length_distribution(df, cfg, reports_dir)
+        with timer.step("length_distribution"):
+            _report_length_distribution(df, cfg, reports_dir)
 
     if "datasheet" in sections:
-        _report_datasheet(cfg, reports_dir)
+        with timer.step("datasheet"):
+            _report_datasheet(cfg, reports_dir)
 
     log.info("─" * 60)
     log.info(f"Corpus report complete. All artefacts written to {reports_dir}")
@@ -426,7 +444,7 @@ def run(args: argparse.Namespace) -> None:
         with mlflow.start_run(run_name="03_generate_corpus_report"):
             mlflow.log_params({
                 "sections_run": sorted(sections),
-                "source_parquet": str(in_path) if df is not None else "none",
+                "source_parquet": str(Path(cfg.paths.data_normalized) / "deduped.parquet"),
             })
             if df is not None:
                 if "dataset_analysis" in sections:
@@ -466,6 +484,7 @@ def run(args: argparse.Namespace) -> None:
                 ds_path = reports_dir / "datasheet.json"
                 if ds_path.exists():
                     mlflow.log_artifact(str(ds_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -488,6 +507,8 @@ def parse_args() -> argparse.Namespace:
             "Default: all sections."
         ),
     )
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

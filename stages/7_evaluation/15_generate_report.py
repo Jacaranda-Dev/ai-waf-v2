@@ -36,6 +36,8 @@ from typing import Any
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -152,78 +154,91 @@ def _latency_tail_digest(lat_data: dict | None) -> dict:
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg         = load_config(args.config)
+
+    require_inputs({
+        f"{Path(cfg.paths.reports) / 'metrics' / 'master_comparison_table.json'}": "run 14_comparison_table.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "final_evaluation_report.json",
+        args.force, "Stage 7.15 generate report"
+    ):
+        return
+
     reports_dir = Path(cfg.paths.reports)
 
     log.info("Assembling final evaluation report...")
+    timer = StepTimer()
 
     # ── Load all sections ─────────────────────────────────────────────────────
     sections: dict[str, Any] = {}
-    for section_name, rel_path in SECTION_MANIFEST.items():
-        full_path = reports_dir / rel_path
-        data      = _safe_load(full_path)
-        if data is not None:
-            sections[section_name] = data
-            log.info(f"  ✓ {section_name}")
-        else:
-            log.warning(f"  ✗ {section_name} — missing ({full_path})")
+    with timer.step("load_sections"):
+        for section_name, rel_path in SECTION_MANIFEST.items():
+            full_path = reports_dir / rel_path
+            data      = _safe_load(full_path)
+            if data is not None:
+                sections[section_name] = data
+                log.info(f"  ✓ {section_name}")
+            else:
+                log.warning(f"  ✗ {section_name} — missing ({full_path})")
 
     # ── Build summary ─────────────────────────────────────────────────────────
-    summary = _build_summary(
-        sections.get("detection_efficacy"),
-        sections.get("latency_throughput"),
-        sections.get("adversarial_robustness"),
-    )
+    with timer.step("build_report"):
+        summary = _build_summary(
+            sections.get("detection_efficacy"),
+            sections.get("latency_throughput"),
+            sections.get("adversarial_robustness"),
+        )
 
-    tail_digest = _latency_tail_digest(sections.get("latency_throughput"))
+        tail_digest = _latency_tail_digest(sections.get("latency_throughput"))
 
-    # ── Novel attack CI summary ───────────────────────────────────────────────
-    novel_ci_summary: dict = {}
-    for attack, stats in (sections.get("novel_attack_generalization") or {}).items():
-        if isinstance(stats, dict):
-            novel_ci_summary[attack] = {
-                "detection_rate": stats.get("detection_rate"),
-                "ci_95":          [stats.get("ci_95_low"), stats.get("ci_95_high")],
-                "n_unique":       stats.get("n_unique"),
-            }
+        # ── Novel attack CI summary ───────────────────────────────────────────────
+        novel_ci_summary: dict = {}
+        for attack, stats in (sections.get("novel_attack_generalization") or {}).items():
+            if isinstance(stats, dict):
+                novel_ci_summary[attack] = {
+                    "detection_rate": stats.get("detection_rate"),
+                    "ci_95":          [stats.get("ci_95_low"), stats.get("ci_95_high")],
+                    "n_unique":       stats.get("n_unique"),
+                }
 
-    # ── FP clustering summary (from detection_efficacy) ───────────────────────
-    fp_cluster_summary: dict = {}
-    for model_name, model_data in (sections.get("detection_efficacy") or {}).items():
-        fp_analysis = model_data.get("fp_analysis") if isinstance(model_data, dict) else None
-        if fp_analysis:
-            fp_cluster_summary[model_name] = {
-                "total_fp":       fp_analysis.get("total_fp"),
-                "category_counts": fp_analysis.get("category_counts"),
-                "n_clusters":     len(fp_analysis.get("kmeans_clusters", [])),
-            }
+        # ── FP clustering summary (from detection_efficacy) ───────────────────────
+        fp_cluster_summary: dict = {}
+        for model_name, model_data in (sections.get("detection_efficacy") or {}).items():
+            fp_analysis = model_data.get("fp_analysis") if isinstance(model_data, dict) else None
+            if fp_analysis:
+                fp_cluster_summary[model_name] = {
+                    "total_fp":       fp_analysis.get("total_fp"),
+                    "category_counts": fp_analysis.get("category_counts"),
+                    "n_clusters":     len(fp_analysis.get("kmeans_clusters", [])),
+                }
 
-    # ── Tokenizer correction summary ─────────────────────────────────────────
-    tok_correction: dict = {}
-    tok_abl = sections.get("tokenizer_ablation", {})
-    if "transformer_correction" in tok_abl:
-        tok_correction = tok_abl["transformer_correction"]
+        # ── Tokenizer correction summary ─────────────────────────────────────────
+        tok_correction: dict = {}
+        tok_abl = sections.get("tokenizer_ablation", {})
+        if "transformer_correction" in tok_abl:
+            tok_correction = tok_abl["transformer_correction"]
 
-    # ── Assemble final report ─────────────────────────────────────────────────
-    final_report: dict[str, Any] = {
-        "report_metadata": {
-            "generated_at":  datetime.now(timezone.utc).isoformat(),
-            "config":        str(args.config),
-            "sections_found": list(sections.keys()),
-            "sections_missing": [k for k in SECTION_MANIFEST if k not in sections],
-        },
-        "summary": summary,
-        "tail_latency_digest": tail_digest,
-        "novel_attack_ci_summary": novel_ci_summary,
-        "fp_diagnostic_summary": fp_cluster_summary,
-        "tokenizer_anchor_correction": tok_correction,
-        **sections,   # full data for each section
-    }
+        # ── Assemble final report ─────────────────────────────────────────────────
+        final_report: dict[str, Any] = {
+            "report_metadata": {
+                "generated_at":  datetime.now(timezone.utc).isoformat(),
+                "config":        str(args.config),
+                "sections_found": list(sections.keys()),
+                "sections_missing": [k for k in SECTION_MANIFEST if k not in sections],
+            },
+            "summary": summary,
+            "tail_latency_digest": tail_digest,
+            "novel_attack_ci_summary": novel_ci_summary,
+            "fp_diagnostic_summary": fp_cluster_summary,
+            "tokenizer_anchor_correction": tok_correction,
+            **sections,   # full data for each section
+        }
 
-    out = reports_dir / "final_evaluation_report.json"
-    out.write_text(json.dumps(final_report, indent=2, default=str))
-    log.info(f"\nFinal evaluation report generated: {out}")
-    log.info(f"  Sections included: {len(sections)}/{len(SECTION_MANIFEST)}")
-    log.info(f"  Models in summary: {list(summary.keys())}")
+        out = reports_dir / "final_evaluation_report.json"
+        out.write_text(json.dumps(final_report, indent=2, default=str))
+        log.info(f"\nFinal evaluation report generated: {out}")
+        log.info(f"  Sections included: {len(sections)}/{len(SECTION_MANIFEST)}")
+        log.info(f"  Models in summary: {list(summary.keys())}")
 
     try:
         import mlflow
@@ -246,6 +261,7 @@ def run(args: argparse.Namespace) -> None:
                         metrics[f"{model_name}_{key}"] = float(val)
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -253,6 +269,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

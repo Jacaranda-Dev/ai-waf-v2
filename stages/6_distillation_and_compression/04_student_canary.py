@@ -38,6 +38,8 @@ from ai_waf_v2.models.student import StudentClassifier
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -129,7 +131,17 @@ def run(args: argparse.Namespace) -> None:
     cfg         = load_config(args.config)
     student_cfg = cfg.model.student
 
+    require_inputs({
+        f"{student_cfg.output_dir}/best_student.pt": "run 02_distill_train.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "student_canary.json",
+        args.force, "Stage 6.4 student canary evaluation"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    timer  = StepTimer()
 
     # ── Student ───────────────────────────────────
     checkpoint = Path(student_cfg.output_dir) / "best_student.pt"
@@ -163,7 +175,8 @@ def run(args: argparse.Namespace) -> None:
 
     # ── Canaries ──────────────────────────────────
     canary_dir = Path(args.canary_dir) if args.canary_dir else None
-    canaries   = _load_canaries(canary_dir)
+    with timer.step("load_canaries"):
+        canaries = _load_canaries(canary_dir)
 
     # Group by family
     families: dict[str, list[str]] = {}
@@ -179,27 +192,28 @@ def run(args: argparse.Namespace) -> None:
     log.info("Student Canary Evaluation")
     log.info("=" * 60)
 
-    for family, texts in families.items():
-        probs, preds = _batch_score(student, tokenizer, texts, threshold, device)
-        recall = float(preds.mean())   # all canaries are attacks → recall = detection rate
-        mean_p = float(probs.mean())
-        min_p  = float(probs.min())
+    with timer.step("evaluate_canaries"):
+        for family, texts in families.items():
+            probs, preds = _batch_score(student, tokenizer, texts, threshold, device)
+            recall = float(preds.mean())   # all canaries are attacks → recall = detection rate
+            mean_p = float(probs.mean())
+            min_p  = float(probs.min())
 
-        status = "PASS" if recall >= min_recall else "FAIL"
-        if status == "FAIL":
-            failed_fams.append(family)
+            status = "PASS" if recall >= min_recall else "FAIL"
+            if status == "FAIL":
+                failed_fams.append(family)
 
-        log.info(
-            f"  [{status}] {family:25s}  recall={recall:.3f}  "
-            f"mean_prob={mean_p:.3f}  min_prob={min_p:.3f}  n={len(texts)}"
-        )
-        results[family] = {
-            "recall":    recall,
-            "mean_prob": mean_p,
-            "min_prob":  min_p,
-            "n":         len(texts),
-            "pass":      status == "PASS",
-        }
+            log.info(
+                f"  [{status}] {family:25s}  recall={recall:.3f}  "
+                f"mean_prob={mean_p:.3f}  min_prob={min_p:.3f}  n={len(texts)}"
+            )
+            results[family] = {
+                "recall":    recall,
+                "mean_prob": mean_p,
+                "min_prob":  min_p,
+                "n":         len(texts),
+                "pass":      status == "PASS",
+            }
 
     overall_recall = np.mean([r["recall"] for r in results.values()])
     log.info("-" * 60)
@@ -219,6 +233,7 @@ def run(args: argparse.Namespace) -> None:
         "slo_passed":       len(failed_fams) == 0,
         "failed_families":  failed_fams,
         "per_family":       results,
+        "timings_s":        timer.timings,
     }, indent=2))
     log.info(f"Canary report saved to {out_path}")
 
@@ -242,6 +257,7 @@ def run(args: argparse.Namespace) -> None:
                 metrics[f"recall_{fam}"] = float(info["recall"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -263,6 +279,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--canary-dir",  default=None,
                    help="Path to directory of JSONL canary payload files. "
                         "Falls back to built-in synthetic payloads if not provided.")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

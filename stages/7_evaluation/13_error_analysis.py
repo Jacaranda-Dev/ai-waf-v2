@@ -11,10 +11,19 @@ from ai_waf_v2.data.dataset import WafDataset, get_split_path
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 from torch.utils.data import DataLoader
 log = get_logger(__name__)
 def run(args):
     configure_root(); cfg = load_config(args.config)
+    require_inputs({
+        "data/splits/test.parquet": "make data_augment_all",
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+    })
+    if check_output(Path(cfg.paths.reports) / "metrics" / "error_analysis.json",
+                    args.force, "Stage 7.13 error analysis"):
+        return
     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = HttpTokenizer.load(cfg.tokenizer.track_b.output_dir, cfg.tokenizer.seq_len)
     ckpt = Path(cfg.model.track_b_99m.output_dir)/"best_99m.pt"
@@ -29,8 +38,9 @@ def run(args):
                            include_attack_class=True)
     loader = DataLoader(WafDataset(test_path, tokenizer._tok, cfg.tokenizer.seq_len),
                         batch_size=256, shuffle=False, collate_fn=collator, num_workers=2)
+    timer = StepTimer()
     all_preds, all_probs, all_labels, all_classes = [], [], [], []
-    with torch.no_grad():
+    with timer.step("inference"), torch.no_grad():
         for batch in loader:
             ids = batch["input_ids"].to(device); mask = batch["attention_mask"].to(device)
             preds, probs = model.predict(ids, mask)
@@ -78,9 +88,13 @@ def run(args):
                 "fn_rate":    float(result["n_fn"] / max(1, len(all_labels))),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
 def parse_args():
-    p = argparse.ArgumentParser(); p.add_argument("--config", default="config/pipeline.yaml"); return p.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true", help="Re-run even if outputs already exist")
+    return p.parse_args()
 if __name__ == "__main__": run(parse_args())

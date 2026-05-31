@@ -32,6 +32,8 @@ import torch
 from ai_waf_v2.eval.latency import LatencyBenchmark, OnnxLatencyBenchmark
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -198,6 +200,15 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
+    require_inputs({
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "latency" / "latency_summary.json",
+        args.force, "Stage 7.2 latency benchmark"
+    ):
+        return
+
     batch_sizes = args.batch_sizes or cfg.evaluation.batch_sizes
     devices     = args.devices    or cfg.evaluation.devices
     report_dir  = Path(cfg.paths.reports) / "latency"
@@ -207,15 +218,17 @@ def run(args: argparse.Namespace) -> None:
     vocab_size = cfg.model.track_b_99m.vocab_size
 
     all_results: dict[str, dict] = {}
+    timer = StepTimer()
 
     # ── PCIe overhead (GPU only, once) ────────────────────────────────────────
     pcie_overhead: dict[str, float] = {}
     if "gpu" in devices and torch.cuda.is_available():
         log.info("\n=== PCIe HOST→DEVICE TRANSFER OVERHEAD ===")
-        pcie_overhead = {
-            str(bs): v
-            for bs, v in _measure_pcie_overhead_ms(seq_len, vocab_size, batch_sizes).items()
-        }
+        with timer.step("pcie_overhead"):
+            pcie_overhead = {
+                str(bs): v
+                for bs, v in _measure_pcie_overhead_ms(seq_len, vocab_size, batch_sizes).items()
+            }
 
     for device_str_cfg in devices:
         if device_str_cfg == "gpu" and not torch.cuda.is_available():
@@ -235,12 +248,13 @@ def run(args: argparse.Namespace) -> None:
                                          map_location=device_key)
             teacher.to(device).eval()
 
-            stats = _extended_latency_stats(
-                teacher, device_key, seq_len, vocab_size, batch_sizes,
-                n_warmup=cfg.evaluation.n_latency_warmup,
-                n_runs=cfg.evaluation.n_latency_runs,
-                use_bf16=use_bf16,
-            )
+            with timer.step(f"benchmark_teacher_{device_key}"):
+                stats = _extended_latency_stats(
+                    teacher, device_key, seq_len, vocab_size, batch_sizes,
+                    n_warmup=cfg.evaluation.n_latency_warmup,
+                    n_runs=cfg.evaluation.n_latency_runs,
+                    use_bf16=use_bf16,
+                )
             slo = _check_slo(stats,
                              cfg.slo.latency_inline_p99_ms,
                              cfg.slo.throughput_min_rps)
@@ -259,12 +273,13 @@ def run(args: argparse.Namespace) -> None:
                                              map_location=device_key)
             student.to(device).eval()
 
-            stats = _extended_latency_stats(
-                student, device_key, seq_len, vocab_size, batch_sizes,
-                n_warmup=cfg.evaluation.n_latency_warmup,
-                n_runs=cfg.evaluation.n_latency_runs,
-                use_bf16=use_bf16,
-            )
+            with timer.step(f"benchmark_student_{device_key}"):
+                stats = _extended_latency_stats(
+                    student, device_key, seq_len, vocab_size, batch_sizes,
+                    n_warmup=cfg.evaluation.n_latency_warmup,
+                    n_runs=cfg.evaluation.n_latency_runs,
+                    use_bf16=use_bf16,
+                )
             slo = _check_slo(stats,
                              cfg.slo.latency_inline_p99_ms,
                              cfg.slo.throughput_min_rps)
@@ -285,7 +300,8 @@ def run(args: argparse.Namespace) -> None:
                     n_warmup=cfg.evaluation.n_latency_warmup,
                     n_runs=max(cfg.evaluation.n_latency_runs, N_TIMING_SAMPLES),
                 )
-                ort_results = ort_bench.run(batch_sizes)
+                with timer.step("benchmark_student_onnx"):
+                    ort_results = ort_bench.run(batch_sizes)
                 key = f"student_onnx_{device_key}"
                 all_results[key] = {"results": ort_results}
                 ort_bench.print_table(ort_results)
@@ -321,6 +337,7 @@ def run(args: argparse.Namespace) -> None:
             "percentiles_reported": ["p50", "p99", "p99.9"],
             "jitter_metric": "std_dev_ms",
         },
+        "timings_s": timer.timings,
     }
     (report_dir / "latency_summary.json").write_text(json.dumps(report, indent=2))
     log.info(f"\nLatency report saved to {report_dir / 'latency_summary.json'}")
@@ -352,6 +369,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{model_key}_slo_rps_ok"]  = float(slo.get("rps_ok", False))
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(report_dir / "latency_summary.json"))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -361,6 +379,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config",      default="config/pipeline.yaml")
     p.add_argument("--batch-sizes", nargs="+", type=int, default=None)
     p.add_argument("--devices",     nargs="+", default=None, choices=["gpu", "cpu"])
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

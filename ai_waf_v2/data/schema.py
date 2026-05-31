@@ -36,6 +36,49 @@ from pydantic import BaseModel, Field, field_validator
 
 
 # ─────────────────────────────────────────────────────────
+# Canonical attack-class mapping
+# Single source of truth imported by all pipeline stages.
+# ─────────────────────────────────────────────────────────
+
+CLASS_ALIASES: dict[str, str] = {
+    # SQL injection
+    "sql injection": "sqli", "sql_injection": "sqli", "sqli": "sqli",
+    # XSS
+    "cross-site scripting": "xss", "cross_site_scripting": "xss", "xss": "xss",
+    # File inclusion
+    "local file inclusion": "lfi", "lfi": "lfi",
+    "remote file inclusion": "rfi", "rfi": "rfi",
+    # SSRF
+    "server-side request forgery": "ssrf", "ssrf": "ssrf",
+    # Command injection
+    "command injection": "cmdi", "cmd injection": "cmdi", "cmdi": "cmdi",
+    # XXE / SSTI / path / header
+    "xml external entity": "xxe", "xxe": "xxe",
+    "server-side template injection": "ssti", "ssti": "ssti",
+    "path traversal": "path_traversal", "directory traversal": "path_traversal",
+    "path_traversal": "path_traversal",
+    "header injection": "header_injection", "header_injection": "header_injection",
+    # Benign
+    "normal": "benign", "legitimate": "benign", "benign": "benign",
+    # SR-BH 2020 broad categories — too coarse to map to a single canonical
+    # class; kept as malicious (label=1) but class is marked unknown.
+    "injection": "unknown",
+    "manipulation": "unknown",
+    "scanning for vulnerable software": "unknown",
+    "fake the source of data": "unknown",
+    "http abusion": "unknown",
+    # Generic ambiguous labels
+    "anomalous": "unknown", "attack": "unknown", "malicious": "unknown",
+    "unknown": "unknown",
+}
+
+
+def canonical_class(raw: str) -> str:
+    """Map any noisy attack-class string to its canonical form."""
+    return CLASS_ALIASES.get(str(raw).lower().strip(), "unknown")
+
+
+# ─────────────────────────────────────────────────────────
 # Pydantic model — used for validation during ingestion
 # ─────────────────────────────────────────────────────────
 

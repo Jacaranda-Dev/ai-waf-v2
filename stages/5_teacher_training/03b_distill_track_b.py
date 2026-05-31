@@ -57,7 +57,9 @@ from transformers import AutoModel, AutoTokenizer
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 from checkpoint_utils import CheckpointTracker, load_checkpoint, resolve_checkpoint
 from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate
@@ -310,10 +312,23 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
+    require_inputs({
+        f"{cfg.model.track_a_large.output_dir}/checkpoint_meta.json": "run 01_track_a_large.py",
+        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json":         "run 03_train_custom_bpe.py",
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.model.track_b_99m.output_dir) / "checkpoint_meta.json",
+        args.force, "Stage 5.3b Track B distillation"
+    ):
+        return
+
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     mcfg    = cfg.model.track_b_99m
     tcfg    = cfg.training
     dcfg    = cfg.training.distillation
+    timer   = StepTimer()
 
     temperature = dcfg.get("temperature", 4.0)
     alpha       = dcfg.get("alpha",       0.5)
@@ -356,18 +371,20 @@ def run(args: argparse.Namespace) -> None:
             pin_memory=True,
         )
 
-    train_loader = _make_loader("train", shuffle=True)
-    val_loader   = _make_loader("val",   shuffle=False)
+    with timer.step("setup_data"):
+        train_loader = _make_loader("train", shuffle=True)
+        val_loader   = _make_loader("val",   shuffle=False)
 
     # ------------------------------------------------------------------
     # Teacher — loaded from Track A large checkpoint, then frozen
     # ------------------------------------------------------------------
-    teacher_ckpt = resolve_checkpoint("track_a_large", cfg)
-    teacher = FrozenDeBERTaTeacher(
-        base_model=cfg.model.track_a_large.base_model,
-        num_labels=mcfg.num_labels,
-        ckpt_path=teacher_ckpt,
-    ).to(device)
+    with timer.step("load_teacher"):
+        teacher_ckpt = resolve_checkpoint("track_a_large", cfg)
+        teacher = FrozenDeBERTaTeacher(
+            base_model=cfg.model.track_a_large.base_model,
+            num_labels=mcfg.num_labels,
+            ckpt_path=teacher_ckpt,
+        ).to(device)
     log.info(f"Teacher loaded from {teacher_ckpt} and frozen.")
 
     # ------------------------------------------------------------------
@@ -462,50 +479,54 @@ def run(args: argparse.Namespace) -> None:
 
         eval_loader = _make_student_only_loader()
 
-        for epoch in range(1, tcfg.epochs + 1):
-            train_m = run_distill_epoch(
-                student, teacher, train_loader,
-                optimizer, scheduler, device,
-                temperature=temperature, alpha=alpha,
-                accum_steps=tcfg.get("accum_steps", 1),
-                scaler=scaler,
-            )
-            val_m = evaluate(student, eval_loader, device, num_labels=mcfg.num_labels)
+        with timer.step("distillation"):
+            for epoch in range(1, tcfg.epochs + 1):
+                train_m = run_distill_epoch(
+                    student, teacher, train_loader,
+                    optimizer, scheduler, device,
+                    temperature=temperature, alpha=alpha,
+                    accum_steps=tcfg.get("accum_steps", 1),
+                    scaler=scaler,
+                )
+                val_m = evaluate(student, eval_loader, device, num_labels=mcfg.num_labels)
 
-            log.info(
-                f"Epoch {epoch}/{tcfg.epochs} | "
-                f"loss={train_m['loss']:.4f}  ce={train_m['ce_loss']:.4f}  "
-                f"kl={train_m['kl_loss']:.4f} | "
-                f"val_macro_f1={val_m['macro_f1']:.4f}"
-            )
+                log.info(
+                    f"Epoch {epoch}/{tcfg.epochs} | "
+                    f"loss={train_m['loss']:.4f}  ce={train_m['ce_loss']:.4f}  "
+                    f"kl={train_m['kl_loss']:.4f} | "
+                    f"val_macro_f1={val_m['macro_f1']:.4f}"
+                )
 
-            mlflow.log_metrics(
-                {f"train_{k}": v for k, v in train_m.items()} |
-                {f"val_{k}":   v for k, v in val_m.items()},
-                step=epoch,
-            )
+                mlflow.log_metrics(
+                    {f"train_{k}": v for k, v in train_m.items()} |
+                    {f"val_{k}":   v for k, v in val_m.items()},
+                    step=epoch,
+                )
 
-            tracker.step(
-                student, val_m,
-                meta={"epoch": epoch, "T": temperature, "alpha": alpha,
-                      "train_kl": train_m["kl_loss"]},
-                step=epoch,
-            )
+                tracker.step(
+                    student, val_m,
+                    meta={"epoch": epoch, "T": temperature, "alpha": alpha,
+                          "train_kl": train_m["kl_loss"]},
+                    step=epoch,
+                )
 
-            if tracker.should_stop:
-                log.info(f"Early stopping at epoch {epoch}.")
-                break
+                if tracker.should_stop:
+                    log.info(f"Early stopping at epoch {epoch}.")
+                    break
 
         log.info(
             f"Distillation complete. Best macro_f1={tracker.best_value:.5f} "
             f"→ {tracker.best_ckpt}"
         )
         mlflow.log_artifact(str(tracker.best_ckpt / "checkpoint_meta.json"))
+        timer.log_mlflow()
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Knowledge distillation: DeBERTa → Track B 99M.")
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

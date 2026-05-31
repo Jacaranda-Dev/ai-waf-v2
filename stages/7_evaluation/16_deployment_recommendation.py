@@ -31,6 +31,8 @@ from typing import Any
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -65,6 +67,16 @@ def _latency_score(p99_ms: float | None, slo_ms: float) -> float:
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg         = load_config(args.config)
+
+    require_inputs({
+        f"{Path(cfg.paths.reports) / 'metrics' / 'master_comparison_table.json'}": "run 14_comparison_table.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "deployment_recommendation.json",
+        args.force, "Stage 7.16 deployment recommendation"
+    ):
+        return
+
     reports_dir = Path(cfg.paths.reports)
     metrics_dir = reports_dir / "metrics"
     lat_dir     = reports_dir / "latency"
@@ -89,72 +101,75 @@ def run(args: argparse.Namespace) -> None:
         log.error("master_comparison_table.json is empty")
         return
 
+    timer = StepTimer()
+
     # ── Extract raw scores ────────────────────────────────────────────────────
-    models   = [r["Model"] for r in table]
-    auc_prs  = [r.get("AUC-PR") for r in table]
-    p99s     = [r.get("p99_ms_bs1") for r in table]
-    evasions = [r.get("mean_evasion_rate") for r in table]
+    with timer.step("score_models"):
+        models   = [r["Model"] for r in table]
+        auc_prs  = [r.get("AUC-PR") for r in table]
+        p99s     = [r.get("p99_ms_bs1") for r in table]
+        evasions = [r.get("mean_evasion_rate") for r in table]
 
-    # Robustness = 1 − evasion_rate  (higher is better)
-    robustness = [
-        (1.0 - e) if e is not None else None
-        for e in evasions
-    ]
+        # Robustness = 1 − evasion_rate  (higher is better)
+        robustness = [
+            (1.0 - e) if e is not None else None
+            for e in evasions
+        ]
 
-    # Latency score per model (not Normalized — already in [0,1])
-    lat_scores_raw = [_latency_score(p99, slo_p99_ms) for p99 in p99s]
+        # Latency score per model (not Normalized — already in [0,1])
+        lat_scores_raw = [_latency_score(p99, slo_p99_ms) for p99 in p99s]
 
-    # Normalize AUC-PR and robustness
-    norm_auc_pr     = _Normalize(auc_prs)
-    norm_latency    = _Normalize(lat_scores_raw)   # relative ranking on top of [0,1]
-    norm_robustness = _Normalize(robustness)
+        # Normalize AUC-PR and robustness
+        norm_auc_pr     = _Normalize(auc_prs)
+        norm_latency    = _Normalize(lat_scores_raw)   # relative ranking on top of [0,1]
+        norm_robustness = _Normalize(robustness)
 
-    # ── Weighted composite score ──────────────────────────────────────────────
-    scored: list[dict[str, Any]] = []
-    for i, (model, row) in enumerate(zip(models, table)):
-        composite = (
-            W_EFFICACY   * norm_auc_pr[i]
-            + W_LATENCY    * norm_latency[i]
-            + W_ROBUSTNESS * norm_robustness[i]
-        )
-        entry: dict[str, Any] = {
-            "model":                  model,
-            "composite_score":        round(composite, 5),
-            "component_scores": {
-                "efficacy_raw":       auc_prs[i],
-                "efficacy_norm":      round(norm_auc_pr[i], 5),
-                "latency_p99_ms":     p99s[i],
-                "latency_score_raw":  round(lat_scores_raw[i], 5),
-                "latency_norm":       round(norm_latency[i], 5),
-                "mean_evasion_rate":  evasions[i],
-                "robustness_raw":     robustness[i],
-                "robustness_norm":    round(norm_robustness[i], 5),
-            },
-            "slo_checks": {
-                "p99_ms":   p99s[i],
-                "p99_ok":   (p99s[i] is not None and p99s[i] <= slo_p99_ms),
-                "rps":      row.get("RPS_bs1"),
-                "rps_ok":   (row.get("RPS_bs1") is not None
-                             and row["RPS_bs1"] >= slo_rps),
-                "p99_9_ms": row.get("p99_9_ms_bs1"),
-                "p99_9_ok": (row.get("p99_9_ms_bs1") is not None
-                             and row["p99_9_ms_bs1"] <= slo_p99_ms * 1.5),
-            },
-            "fp_diagnostics": {
-                "total_fp":         row.get("total_fp"),
-                "high_entropy_fp":  row.get("fp_high_entropy"),
-                "safe_malform_fp":  row.get("fp_safe_malform"),
-            },
-            "model_metadata": {
-                "disk_mb":     row.get("disk_mb"),
-                "n_params":    row.get("n_params"),
-                "vram_fp16_mb": row.get("vram_fp16_mb"),
-            },
-        }
-        scored.append(entry)
+        # ── Weighted composite score ──────────────────────────────────────────────
+        scored: list[dict[str, Any]] = []
+        for i, (model, row) in enumerate(zip(models, table)):
+            composite = (
+                W_EFFICACY   * norm_auc_pr[i]
+                + W_LATENCY    * norm_latency[i]
+                + W_ROBUSTNESS * norm_robustness[i]
+            )
+            entry: dict[str, Any] = {
+                "model":                  model,
+                "composite_score":        round(composite, 5),
+                "component_scores": {
+                    "efficacy_raw":       auc_prs[i],
+                    "efficacy_norm":      round(norm_auc_pr[i], 5),
+                    "latency_p99_ms":     p99s[i],
+                    "latency_score_raw":  round(lat_scores_raw[i], 5),
+                    "latency_norm":       round(norm_latency[i], 5),
+                    "mean_evasion_rate":  evasions[i],
+                    "robustness_raw":     robustness[i],
+                    "robustness_norm":    round(norm_robustness[i], 5),
+                },
+                "slo_checks": {
+                    "p99_ms":   p99s[i],
+                    "p99_ok":   (p99s[i] is not None and p99s[i] <= slo_p99_ms),
+                    "rps":      row.get("RPS_bs1"),
+                    "rps_ok":   (row.get("RPS_bs1") is not None
+                                 and row["RPS_bs1"] >= slo_rps),
+                    "p99_9_ms": row.get("p99_9_ms_bs1"),
+                    "p99_9_ok": (row.get("p99_9_ms_bs1") is not None
+                                 and row["p99_9_ms_bs1"] <= slo_p99_ms * 1.5),
+                },
+                "fp_diagnostics": {
+                    "total_fp":         row.get("total_fp"),
+                    "high_entropy_fp":  row.get("fp_high_entropy"),
+                    "safe_malform_fp":  row.get("fp_safe_malform"),
+                },
+                "model_metadata": {
+                    "disk_mb":     row.get("disk_mb"),
+                    "n_params":    row.get("n_params"),
+                    "vram_fp16_mb": row.get("vram_fp16_mb"),
+                },
+            }
+            scored.append(entry)
 
-    # Sort descending by composite score
-    scored.sort(key=lambda x: x["composite_score"], reverse=True)
+        # Sort descending by composite score
+        scored.sort(key=lambda x: x["composite_score"], reverse=True)
 
     winner        = scored[0]
     runner_up     = scored[1] if len(scored) > 1 else None
@@ -237,6 +252,7 @@ def run(args: argparse.Namespace) -> None:
             metrics["winner_rps_ok"]  = float(slo_checks.get("rps_ok", False))
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -289,6 +305,8 @@ def _generate_reasoning(
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

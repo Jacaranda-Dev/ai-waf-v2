@@ -41,6 +41,8 @@ from ai_waf_v2.eval.metrics import compute_metrics, compute_per_class_metrics
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config, ModelArchConfig, StudentModelConfig
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -263,10 +265,22 @@ def _analyse_false_positives(
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg         = load_config(args.config)
+
+    require_inputs({
+        "data/splits/test.parquet": "make data_augment_all",
+        f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "detection_results.json",
+        args.force, "Stage 7.1 detection metrics"
+    ):
+        return
+
     device      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     splits_dir  = cfg.paths.data_splits
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
+    timer = StepTimer()
 
     tokenizer = HttpTokenizer.load(
         cfg.tokenizer.track_b.output_dir,
@@ -297,21 +311,23 @@ def run(args: argparse.Namespace) -> None:
 
     # ── Track B 99M ───────────────────────────────────────────────────────────
     log.info("Evaluating Track B 99M...")
-    results["track_b_99m"] = _load_model_and_predict(
-        Path(cfg.model.track_b_99m.output_dir) / "best_99m.pt",
-        cfg.model.track_b_99m,
-        tokenizer, test_loader, device,
-    )
+    with timer.step("evaluate_track_b_99m"):
+        results["track_b_99m"] = _load_model_and_predict(
+            Path(cfg.model.track_b_99m.output_dir) / "best_99m.pt",
+            cfg.model.track_b_99m,
+            tokenizer, test_loader, device,
+        )
     _log_result("track_b_99m", results["track_b_99m"])
 
     # ── Student (distilled) ───────────────────────────────────────────────────
     log.info("Evaluating distilled student...")
-    results["student"] = _load_model_and_predict(
-        Path(cfg.model.student.output_dir) / "best_student.pt",
-        cfg.model.student,
-        tokenizer, test_loader, device,
-        is_student=True,
-    )
+    with timer.step("evaluate_student"):
+        results["student"] = _load_model_and_predict(
+            Path(cfg.model.student.output_dir) / "best_student.pt",
+            cfg.model.student,
+            tokenizer, test_loader, device,
+            is_student=True,
+        )
     _log_result("student", results["student"])
 
     # ── Baselines ─────────────────────────────────────────────────────────────
@@ -371,6 +387,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{prefix}_total_fp"] = float(fp.get("total_fp", 0))
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(reports_dir / "detection_results.json"))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -409,6 +426,8 @@ def _print_comparison_table(results: dict) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

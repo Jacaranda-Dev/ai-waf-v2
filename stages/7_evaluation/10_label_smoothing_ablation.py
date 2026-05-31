@@ -18,6 +18,8 @@ import torch
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -39,6 +41,7 @@ def label_smoothing_ablation(cfg) -> dict:
     from sklearn.pipeline import Pipeline
     from ai_waf_v2.eval.metrics import compute_metrics
 
+    timer = StepTimer()
     splits_dir = Path(cfg.paths.data_splits)
     if not (splits_dir / "train.parquet").exists():
         return {"error": "train.parquet not found"}
@@ -55,22 +58,24 @@ def label_smoothing_ablation(cfg) -> dict:
     smoothing_vals = [0.0, 0.05, 0.1, 0.15, 0.2]
     results = {}
 
-    for eps in smoothing_vals:
-        # Approximate label smoothing: blend labels toward uniform
-        import numpy as np
-        y_soft = y_train.astype(float) * (1 - eps) + eps * 0.5
-        pipe = Pipeline([
-            ("tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(1,3), max_features=20_000)),
-            ("clf",   LogisticRegression(max_iter=300, C=1.0, random_state=42)),
-        ])
-        pipe.fit(X_train, (y_soft > 0.5).astype(int))
-        proba = pipe.predict_proba(X_val)[:, 1]
-        preds = (proba >= 0.5).astype(int)
-        m = compute_metrics(torch.tensor(preds), torch.tensor(proba, dtype=torch.float),
-                            torch.tensor(y_val))
-        results[f"eps_{eps}"] = {"auc_pr": m["auc_pr"], "f1": m["f1"], "fpr": m["fpr"]}
-        log.info(f"  eps={eps:.2f}: AUC-PR={m['auc_pr']:.4f}  F1={m['f1']:.4f}")
+    with timer.step("smoothing_sweep"):
+        for eps in smoothing_vals:
+            # Approximate label smoothing: blend labels toward uniform
+            import numpy as np
+            y_soft = y_train.astype(float) * (1 - eps) + eps * 0.5
+            pipe = Pipeline([
+                ("tfidf", TfidfVectorizer(analyzer="char_wb", ngram_range=(1,3), max_features=20_000)),
+                ("clf",   LogisticRegression(max_iter=300, C=1.0, random_state=42)),
+            ])
+            pipe.fit(X_train, (y_soft > 0.5).astype(int))
+            proba = pipe.predict_proba(X_val)[:, 1]
+            preds = (proba >= 0.5).astype(int)
+            m = compute_metrics(torch.tensor(preds), torch.tensor(proba, dtype=torch.float),
+                                torch.tensor(y_val))
+            results[f"eps_{eps}"] = {"auc_pr": m["auc_pr"], "f1": m["f1"], "fpr": m["fpr"]}
+            log.info(f"  eps={eps:.2f}: AUC-PR={m['auc_pr']:.4f}  F1={m['f1']:.4f}")
 
+    results["timings_s"] = timer.timings
     out = Path(cfg.paths.reports) / "metrics" / "label_smoothing_ablation.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
@@ -94,6 +99,7 @@ def label_smoothing_ablation(cfg) -> dict:
                             metrics[f"{eps_key}_{metric_name}"] = float(val)
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -115,6 +121,15 @@ DISPATCH = {
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
+    require_inputs({
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "label_smoothing_ablation.json",
+        args.force, "Stage 7.10 label smoothing ablation"
+    ):
+        return
     script_name = Path(sys.argv[0]).stem
     fn = DISPATCH.get(script_name)
     if fn is None:
@@ -129,6 +144,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

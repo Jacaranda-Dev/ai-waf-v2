@@ -30,7 +30,9 @@ from sklearn.model_selection import train_test_split
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -214,6 +216,15 @@ def run(args: argparse.Namespace) -> None:
     seed = cfg.project.seed
     seed_everything(seed)
 
+    require_inputs({
+        "data/filtered/filtered.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.data_splits) / "train.parquet",
+        args.force, "Stage 3.7 stratified split"
+    ):
+        return
+
     # Input: filtered data preferred; fall back to deduped
     filtered_path = Path(cfg.paths.data_filtered) / "filtered.parquet"
     deduped_path  = Path(cfg.paths.data_normalized) / "deduped.parquet"
@@ -226,7 +237,10 @@ def run(args: argparse.Namespace) -> None:
     splits_dir = Path(cfg.paths.data_splits)
     splits_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pq.read_table(in_path).to_pandas()
+    timer = StepTimer()
+
+    with timer.step("load_parquet"):
+        df = pq.read_table(in_path).to_pandas()
     log.info(f"Loaded {len(df):,} records from {in_path.name}")
 
     df = _add_composite_key(df)
@@ -234,28 +248,31 @@ def run(args: argparse.Namespace) -> None:
     scfg = cfg.data.split
 
     # ── Sequential splits ─────────────────────────────────────────────────
-    # Step 1: canary (2%)
-    df_main, df_canary = _stratified_split(df, test_size=scfg.canary, seed=seed)
+    with timer.step("stratified_split"):
+        # Step 1: canary (2%)
+        df_main, df_canary = _stratified_split(df, test_size=scfg.canary, seed=seed)
 
-    # Step 2: adversarial (3% of remaining)
-    adv_frac = scfg.adversarial / (scfg.train + scfg.val + scfg.test + scfg.adversarial)
-    df_main, df_adversarial = _stratified_split(df_main, test_size=adv_frac, seed=seed)
+        # Step 2: adversarial (3% of remaining)
+        adv_frac = scfg.adversarial / (scfg.train + scfg.val + scfg.test + scfg.adversarial)
+        df_main, df_adversarial = _stratified_split(df_main, test_size=adv_frac, seed=seed)
 
-    # Step 3: test (15% of remaining)
-    test_frac = scfg.test / (scfg.train + scfg.val + scfg.test)
-    df_main, df_test = _stratified_split(df_main, test_size=test_frac, seed=seed)
+        # Step 3: test (15% of remaining)
+        test_frac = scfg.test / (scfg.train + scfg.val + scfg.test)
+        df_main, df_test = _stratified_split(df_main, test_size=test_frac, seed=seed)
 
-    # Step 4: val (10% of remaining)
-    val_frac = scfg.val / (scfg.train + scfg.val)
-    df_train, df_val = _stratified_split(df_main, test_size=val_frac, seed=seed)
+        # Step 4: val (10% of remaining)
+        val_frac = scfg.val / (scfg.train + scfg.val)
+        df_train, df_val = _stratified_split(df_main, test_size=val_frac, seed=seed)
 
     # ── Build train MinHash LSH for leakage filter ─────────────────────────
     log.info(f"Building train LSH index ({len(df_train):,} records) for leakage guard...")
-    train_lsh = _build_train_lsh(df_train, threshold=LEAKAGE_THRESHOLD)
+    with timer.step("build_leakage_lsh"):
+        train_lsh = _build_train_lsh(df_train, threshold=LEAKAGE_THRESHOLD)
 
     # ── Apply leakage filter to test and canary ────────────────────────────
-    df_test   = _filter_leakage(df_test,   train_lsh, "test")
-    df_canary = _filter_leakage(df_canary, train_lsh, "canary")
+    with timer.step("leakage_filter"):
+        df_test   = _filter_leakage(df_test,   train_lsh, "test")
+        df_canary = _filter_leakage(df_canary, train_lsh, "canary")
 
     # ── Write splits ──────────────────────────────────────────────────────
     _DROP_COLS = ["_strat_key", "_src_bucket"]
@@ -268,17 +285,18 @@ def run(args: argparse.Namespace) -> None:
         "canary":      df_canary,
     }
 
-    for name, sdf in split_dfs.items():
-        sdf = sdf.drop(columns=_DROP_COLS, errors="ignore").copy()
-        sdf["split"] = name
-        pq.write_table(
-            pq.Table.from_pandas(sdf, preserve_index=False),
-            splits_dir / f"{name}.parquet",
-            compression="snappy",
-        )
-        n_ben = int((sdf["label"] == 0).sum())
-        n_mal = int((sdf["label"] == 1).sum())
-        log.info(f"  {name:12s}: {len(sdf):>7,}  benign={n_ben:,}  malicious={n_mal:,}")
+    with timer.step("parquet_write"):
+        for name, sdf in split_dfs.items():
+            sdf = sdf.drop(columns=_DROP_COLS, errors="ignore").copy()
+            sdf["split"] = name
+            pq.write_table(
+                pq.Table.from_pandas(sdf, preserve_index=False),
+                splits_dir / f"{name}.parquet",
+                compression="snappy",
+            )
+            n_ben = int((sdf["label"] == 0).sum())
+            n_mal = int((sdf["label"] == 1).sum())
+            log.info(f"  {name:12s}: {len(sdf):>7,}  benign={n_ben:,}  malicious={n_mal:,}")
 
     # ── Health report ─────────────────────────────────────────────────────
     global_ben  = int((df["label"] == 0).sum())
@@ -299,6 +317,7 @@ def run(args: argparse.Namespace) -> None:
 
     stats_path = Path(cfg.paths.reports) / "metrics" / "split_stats.json"
     stats_path.parent.mkdir(parents=True, exist_ok=True)
+    health["timings_s"] = timer.timings
     stats_path.write_text(json.dumps(health, indent=2))
     log.info(f"Split health report → {stats_path}")
 
@@ -327,6 +346,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{split_name}_imbalance"] = float(info["imbalance_ratio"])
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(stats_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -334,6 +354,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

@@ -32,7 +32,9 @@ import pyarrow.parquet as pq
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 from tokenizer_eval import compute_full_metrics, stratified_sample
 
@@ -115,28 +117,40 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
+    require_inputs({
+        "data/splits/train.parquet": "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.tokenizer.track_b.output_dir) / "tokenizer.json",
+        args.force, "Stage 4.3 Track B BPE training"
+    ):
+        return
+
     tok_cfg     = cfg.tokenizer.track_b
     splits_dir  = Path(cfg.paths.data_splits)
     reports_dir = Path(cfg.paths.reports) / "metrics"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     corpus_path = Path(tok_cfg.output_dir) / "train_corpus.txt"
+    timer       = StepTimer()
 
     # ------------------------------------------------------------------
     # Build corpus with delimiter preservation
     # ------------------------------------------------------------------
-    build_corpus(splits_dir, corpus_path, seed=cfg.project.seed)
+    with timer.step("build_corpus"):
+        build_corpus(splits_dir, corpus_path, seed=cfg.project.seed)
 
     # ------------------------------------------------------------------
     # Train BPE tokenizer
     # ------------------------------------------------------------------
     log.info(f"Training BPE tokenizer (vocab_size={tok_cfg.vocab_size})...")
-    tokenizer_b = HttpTokenizer.train(
-        corpus_path=corpus_path,
-        vocab_size=tok_cfg.vocab_size,
-        output_dir=tok_cfg.output_dir,
-        seq_len=cfg.tokenizer.seq_len,
-    )
+    with timer.step("train_bpe"):
+        tokenizer_b = HttpTokenizer.train(
+            corpus_path=corpus_path,
+            vocab_size=tok_cfg.vocab_size,
+            output_dir=tok_cfg.output_dir,
+            seq_len=cfg.tokenizer.seq_len,
+        )
     log.info(f"Track B tokenizer trained — vocab_size={tokenizer_b.vocab_size}")
 
     # ------------------------------------------------------------------
@@ -160,12 +174,13 @@ def run(args: argparse.Namespace) -> None:
     # Full unified metrics
     # ------------------------------------------------------------------
     seq_len  = cfg.tokenizer.seq_len
-    result_b = compute_full_metrics(
-        tokenizer_b, texts, labels,
-        seq_len=seq_len,
-        unk_token="[UNK]",
-        track_name="track_b",
-    )
+    with timer.step("compute_metrics"):
+        result_b = compute_full_metrics(
+            tokenizer_b, texts, labels,
+            seq_len=seq_len,
+            unk_token="[UNK]",
+            track_name="track_b",
+        )
 
     log.info(
         f"Track B | oov={result_b['oov_rate']:.4f}  "
@@ -183,6 +198,7 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Persist — full comparison deferred to 05_compare_tokenizers.py
     # ------------------------------------------------------------------
+    result_b["timings_s"] = timer.timings
     out_path = reports_dir / "tokenizer_stats_track_b.json"
     out_path.write_text(json.dumps(result_b, indent=2))
     log.info(f"Track B stats saved to {out_path}")
@@ -208,6 +224,7 @@ def run(args: argparse.Namespace) -> None:
                 "actual_vocab_size":  float(tokenizer_b.vocab_size),
             })
             mlflow.log_artifact(str(out_path))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -215,6 +232,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train Track B BPE tokenizer.")
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

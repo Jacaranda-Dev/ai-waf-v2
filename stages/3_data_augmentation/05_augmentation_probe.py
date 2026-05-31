@@ -35,7 +35,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -229,6 +231,16 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     seed_everything(cfg.project.seed)
 
+    require_inputs({
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "augmentation_probe.json",
+        args.force, "Stage 3.5 augmentation probe"
+    ):
+        return
+
     device     = "cuda" if torch.cuda.is_available() else "cpu"
     splits_dir = Path(cfg.paths.data_splits)
 
@@ -240,26 +252,29 @@ def run(args: argparse.Namespace) -> None:
         return
 
     log.info(f"Augmentation probe running on: {device}")
+    timer = StepTimer()
 
-    val_df  = pd.read_parquet(splits_dir / "val.parquet", columns=["raw", "label"])
-    X_val   = _vectorize(val_df["raw"].tolist())
-    y_val   = val_df["label"].to_numpy()
-
-    train_df = pd.read_parquet(splits_dir / "train.parquet", columns=["raw", "label", "source", "attack_class"])
+    with timer.step("load_splits"):
+        val_df  = pd.read_parquet(splits_dir / "val.parquet", columns=["raw", "label"])
+        X_val   = _vectorize(val_df["raw"].tolist())
+        y_val   = val_df["label"].to_numpy()
+        train_df = pd.read_parquet(splits_dir / "train.parquet", columns=["raw", "label", "source", "attack_class"])
 
     # ── 1. Real-only baseline ─────────────────────────────────────────────
     log.info("Training CNN probe on real-only data...")
     real_df   = train_df[~train_df["source"].str.startswith("aug")]
     X_real    = _vectorize(real_df["raw"].tolist())
     y_real    = real_df["label"].to_numpy()
-    m_real    = _eval_probe(_train_probe(X_real, y_real, device=device), X_val, y_val, device=device)
+    with timer.step("train_probe_real_only"):
+        m_real = _eval_probe(_train_probe(X_real, y_real, device=device), X_val, y_val, device=device)
     log.info(f"Real-only   : F1={m_real['f1']:.4f}  AUC-PR={m_real['auc_pr']:.4f}")
 
     # ── 2. Full (real + augmented) ────────────────────────────────────────
     log.info("Training CNN probe on real + augmented data...")
     X_full = _vectorize(train_df["raw"].tolist())
     y_full = train_df["label"].to_numpy()
-    m_full = _eval_probe(_train_probe(X_full, y_full, device=device), X_val, y_val, device=device)
+    with timer.step("train_probe_full"):
+        m_full = _eval_probe(_train_probe(X_full, y_full, device=device), X_val, y_val, device=device)
     log.info(f"Real+Aug    : F1={m_full['f1']:.4f}  AUC-PR={m_full['auc_pr']:.4f}")
 
     delta = m_full["auc_pr"] - m_real["auc_pr"]
@@ -268,8 +283,9 @@ def run(args: argparse.Namespace) -> None:
 
     # ── 3. Per-class saturation analysis ──────────────────────────────────
     log.info("Running per-class saturation analysis...")
-    aug_df       = train_df[train_df["source"].str.startswith("aug")]
-    saturation   = _saturation_check(aug_df, X_val, y_val, X_real, y_real, device)
+    aug_df = train_df[train_df["source"].str.startswith("aug")]
+    with timer.step("saturation_check"):
+        saturation = _saturation_check(aug_df, X_val, y_val, X_real, y_real, device)
 
     # ── 4. Write results ──────────────────────────────────────────────────
     results = {
@@ -280,6 +296,7 @@ def run(args: argparse.Namespace) -> None:
         "verdict":          verdict,
         "saturation":       saturation,
         "stop_signals":     [cls for cls, s in saturation.items() if s["stop_augmentation"]],
+        "timings_s":        timer.timings,
     }
     out = Path(cfg.paths.reports) / "metrics" / "augmentation_probe.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -304,6 +321,7 @@ def run(args: argparse.Namespace) -> None:
                 "delta_auc_pr":      float(delta),
             })
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -317,6 +335,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

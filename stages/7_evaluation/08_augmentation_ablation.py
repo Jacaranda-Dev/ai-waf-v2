@@ -19,6 +19,8 @@ import torch
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__)
 
@@ -40,6 +42,7 @@ def augmentation_ablation(cfg) -> dict:
     from sklearn.pipeline import Pipeline
     from ai_waf_v2.eval.metrics import compute_metrics
 
+    timer = StepTimer()
     splits_dir = Path(cfg.paths.data_splits)
     if not (splits_dir / "train.parquet").exists():
         return {"error": "train.parquet not found"}
@@ -63,19 +66,22 @@ def augmentation_ablation(cfg) -> dict:
     results: dict = {}
 
     # Full training set
-    m_full = probe(train_df["raw"].tolist(), train_df["label"].to_numpy())
+    with timer.step("probe_full"):
+        m_full = probe(train_df["raw"].tolist(), train_df["label"].to_numpy())
     results["full"] = {"auc_pr": m_full["auc_pr"], "f1": m_full["f1"]}
     log.info(f"  {'full':35s}: AUC-PR={m_full['auc_pr']:.4f}")
 
     # Drop each augmentation source one at a time
-    for source in aug_sources:
-        subset = train_df[train_df["source"] != source]
-        if len(subset) < 100: continue
-        m = probe(subset["raw"].tolist(), subset["label"].to_numpy())
-        delta = m["auc_pr"] - m_full["auc_pr"]
-        results[f"drop_{source}"] = {"auc_pr": m["auc_pr"], "delta": round(delta,5)}
-        log.info(f"  {'drop_'+source:35s}: AUC-PR={m['auc_pr']:.4f}  delta={delta:+.4f}")
+    with timer.step("probe_ablations"):
+        for source in aug_sources:
+            subset = train_df[train_df["source"] != source]
+            if len(subset) < 100: continue
+            m = probe(subset["raw"].tolist(), subset["label"].to_numpy())
+            delta = m["auc_pr"] - m_full["auc_pr"]
+            results[f"drop_{source}"] = {"auc_pr": m["auc_pr"], "delta": round(delta,5)}
+            log.info(f"  {'drop_'+source:35s}: AUC-PR={m['auc_pr']:.4f}  delta={delta:+.4f}")
 
+    results["timings_s"] = timer.timings
     out = Path(cfg.paths.reports) / "metrics" / "augmentation_ablation.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
@@ -101,6 +107,7 @@ def augmentation_ablation(cfg) -> dict:
                     metrics[f"{safe_key}_delta"]  = float(val.get("delta", 0))
             log_metrics_dict(metrics)
             mlflow.log_artifact(str(out))
+            timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
 
@@ -124,6 +131,15 @@ DISPATCH = {
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
+    require_inputs({
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(cfg.paths.reports) / "metrics" / "augmentation_ablation.json",
+        args.force, "Stage 7.8 augmentation ablation"
+    ):
+        return
     script_name = Path(sys.argv[0]).stem
     fn = DISPATCH.get(script_name)
     if fn is None:
@@ -138,6 +154,8 @@ def run(args: argparse.Namespace) -> None:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--config", default="config/pipeline.yaml")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 

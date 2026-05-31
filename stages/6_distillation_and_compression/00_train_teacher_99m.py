@@ -32,7 +32,9 @@ from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment
+from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
+from ai_waf_v2.utils.timing import StepTimer
 
 log = get_logger(__name__, log_file="reports/train_teacher_99m.log")
 
@@ -125,8 +127,21 @@ def run(args: argparse.Namespace) -> None:
     tcfg        = cfg.training.teacher          # expects keys: epochs, batch_size, lr, weight_decay, grad_clip
 
     seed_everything(cfg.project.seed)
+
+    require_inputs({
+        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json": "run 03_train_custom_bpe.py",
+        "data/splits/train.parquet": "make data_augment_all",
+        "data/splits/val.parquet":   "make data_augment_all",
+    })
+    if check_output(
+        Path(teacher_cfg.output_dir) / "best_99m.pt",
+        args.force, "Stage 6.0 Teacher 99M training"
+    ):
+        return
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
+    timer  = StepTimer()
 
     # ── Tokenizer ─────────────────────────────────
     tokenizer = HttpTokenizer.load(
@@ -162,23 +177,24 @@ def run(args: argparse.Namespace) -> None:
     )
     splits_dir = cfg.paths.data_splits
 
-    train_loader = DataLoader(
-        WafDataset(get_split_path(splits_dir, "train"), tokenizer._tok, cfg.tokenizer.seq_len),
-        batch_size=tcfg.batch_size,
-        shuffle=True,
-        collate_fn=collator,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        WafDataset(get_split_path(splits_dir, "val"), tokenizer._tok, cfg.tokenizer.seq_len),
-        batch_size=tcfg.batch_size * 2,
-        shuffle=False,
-        collate_fn=collator,
-        num_workers=2,
-        pin_memory=True,
-    )
+    with timer.step("setup_data"):
+        train_loader = DataLoader(
+            WafDataset(get_split_path(splits_dir, "train"), tokenizer._tok, cfg.tokenizer.seq_len),
+            batch_size=tcfg.batch_size,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=True,
+        )
+        val_loader = DataLoader(
+            WafDataset(get_split_path(splits_dir, "val"), tokenizer._tok, cfg.tokenizer.seq_len),
+            batch_size=tcfg.batch_size * 2,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=2,
+            pin_memory=True,
+        )
 
     # ── Optimiser & scheduler ─────────────────────
     optimizer = AdamW(
@@ -211,49 +227,51 @@ def run(args: argparse.Namespace) -> None:
         patience_count = 0
         early_stop_patience = getattr(tcfg, "early_stop_patience", 5)
 
-        for epoch in range(1, tcfg.epochs + 1):
-            t0 = time.perf_counter()
-            train_m = _train_epoch(teacher, train_loader, optimizer, scheduler,
-                                   device, scaler, tcfg.grad_clip)
-            val_m   = _eval_epoch(teacher, val_loader, device)
-            elapsed = time.perf_counter() - t0
+        with timer.step("training"):
+            for epoch in range(1, tcfg.epochs + 1):
+                t0 = time.perf_counter()
+                train_m = _train_epoch(teacher, train_loader, optimizer, scheduler,
+                                       device, scaler, tcfg.grad_clip)
+                val_m   = _eval_epoch(teacher, val_loader, device)
+                elapsed = time.perf_counter() - t0
 
-            log.info(
-                f"Epoch {epoch:03d}/{tcfg.epochs} | "
-                f"train_loss={train_m['loss']:.4f} train_acc={train_m['acc']:.4f} | "
-                f"val_loss={val_m['loss']:.4f} val_acc={val_m['acc']:.4f} | "
-                f"{elapsed:.1f}s"
-            )
-            mlflow.log_metrics({
-                "train_loss": train_m["loss"],
-                "train_acc":  train_m["acc"],
-                "val_loss":   val_m["loss"],
-                "val_acc":    val_m["acc"],
-            }, step=epoch)
+                log.info(
+                    f"Epoch {epoch:03d}/{tcfg.epochs} | "
+                    f"train_loss={train_m['loss']:.4f} train_acc={train_m['acc']:.4f} | "
+                    f"val_loss={val_m['loss']:.4f} val_acc={val_m['acc']:.4f} | "
+                    f"{elapsed:.1f}s"
+                )
+                mlflow.log_metrics({
+                    "train_loss": train_m["loss"],
+                    "train_acc":  train_m["acc"],
+                    "val_loss":   val_m["loss"],
+                    "val_acc":    val_m["acc"],
+                }, step=epoch)
 
-            # Checkpoint every epoch
-            ckpt_path = output_dir / f"checkpoint_epoch{epoch:03d}.pt"
-            teacher.save(ckpt_path)
+                # Checkpoint every epoch
+                ckpt_path = output_dir / f"checkpoint_epoch{epoch:03d}.pt"
+                teacher.save(ckpt_path)
 
-            # Best model
-            if val_m["loss"] < best_val_loss:
-                best_val_loss  = val_m["loss"]
-                patience_count = 0
-                best_path = output_dir / "best_99m.pt"
-                teacher.save(best_path)
-                log.info(f"  ✓ New best val_loss={best_val_loss:.4f} → saved to {best_path}")
-                mlflow.log_artifact(str(best_path))
-            else:
-                patience_count += 1
-                log.info(f"  No improvement ({patience_count}/{early_stop_patience})")
-                if patience_count >= early_stop_patience:
-                    log.info("Early stopping triggered.")
-                    break
+                # Best model
+                if val_m["loss"] < best_val_loss:
+                    best_val_loss  = val_m["loss"]
+                    patience_count = 0
+                    best_path = output_dir / "best_99m.pt"
+                    teacher.save(best_path)
+                    log.info(f"  ✓ New best val_loss={best_val_loss:.4f} → saved to {best_path}")
+                    mlflow.log_artifact(str(best_path))
+                else:
+                    patience_count += 1
+                    log.info(f"  No improvement ({patience_count}/{early_stop_patience})")
+                    if patience_count >= early_stop_patience:
+                        log.info("Early stopping triggered.")
+                        break
 
         # Symlink latest for resume convenience
         latest_path = output_dir / "latest_checkpoint.pt"
         latest_path.unlink(missing_ok=True)
         latest_path.symlink_to(best_path.resolve())
+        timer.log_mlflow()
 
     log.info(f"Teacher training complete. Best model: {best_path}")
 
@@ -264,6 +282,8 @@ def parse_args() -> argparse.Namespace:
                    help="Path to pipeline YAML config.")
     p.add_argument("--resume",  default=None,
                    help="Optional path to checkpoint to resume from.")
+    p.add_argument("--force", action="store_true",
+                   help="Re-run even if outputs already exist")
     return p.parse_args()
 
 
