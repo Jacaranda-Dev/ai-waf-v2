@@ -134,8 +134,8 @@ data_augment_synthesis:
 # 3.2 — Benign enrichment: fit distributions from PCAP traces, write benign_distribution.json
 #        Must run before request framing so Module C can read the fitted profile
 data_augment_benign:
-	@echo "=== Stage 3.2: Benign Enrichment (PCAP alignment) ==="
-	$(PYTHON) stages/3_data_augmentation/02_benign_enrichment.py       --config $(CFG) \
+	@echo "=== Stage 3.2: Traffic Distribution Profiler (PCAP alignment) ==="
+	$(PYTHON) stages/3_data_augmentation/02_traffic_profiler.py        --config $(CFG) \
 	    $(if $(PCAP_DIR),--pcap-dir $(PCAP_DIR),)
 
 # 3.3 — Request framing: re-frame attack payloads + generate benign REST traffic

@@ -478,8 +478,8 @@ Synthesises additional training samples to fill taxonomy gaps and balance class 
 | Script | Purpose |
 |---|---|
 | `01_attack_synthesis.py` | `AugmentationGovernor` reads `taxonomy_inventory.json`, computes per-class gaps, dispatches to generator registry: `GrammarGenerator` (context-free templates), `MutatorGenerator` (8 encoding transforms), `TamperGenerator` (7 SQLMap-style tampers), `LlmGenerator` (any provider via `call_llm`). Parallel via ThreadPoolExecutor |
-| `02_request_framing.py` | Wraps payloads in realistic HTTP envelopes. `HttpMetadataDistribution` singleton shares header/path/UA distributions across attack and benign framing to prevent synthetic fingerprinting. Cloud LLM benign via Anthropic/Google APIs |
-| `03_benign_enrichment.py` | Aligns benign generator distributions with real traffic from PCAP files (dpkt + scapy fallback); falls back to internal defaults |
+| `02_traffic_profiler.py` | Extracts method mix, UA fingerprints, Accept/Content-Type headers, and auth/referer rates from PCAP traces (dpkt + scapy fallback); writes `traffic_distribution.json`. Falls back to empty profile when no PCAP is available; Stage 3.3 then uses its own internal defaults |
+| `03_request_framing.py` | Wraps payloads in realistic HTTP envelopes. `HttpMetadataDistribution` singleton reads `traffic_distribution.json` and applies PCAP-fitted distributions (method weights, UA, Accept, Content-Type, auth/referer rates) to BOTH attack re-framing and benign generation, preventing synthetic fingerprinting. Cloud LLM used for benign-only generation via Anthropic/Google APIs |
 | `04_quality_gate.py` | Four-pass filter: (1) HTTP format validation, (2) tokenizer UNK-rate check, (3) MinHash LSH dedup, (4) CRS label consistency. Leakage guard removes records with Jaccard >0.70 to test/canary splits |
 | `05_augmentation_probe.py` | Lightweight probe model to verify synthetic samples improve generalisation |
 | `06_taxonomy_inventory.py` | Recomputes taxonomy inventory post-augmentation; verifies gaps are closed |

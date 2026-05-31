@@ -11,7 +11,7 @@ Architecture:
     → Ensures grammar-generated and LLM-generated payloads share the same
       header/path distribution, preventing the model from learning "synthetic" fingerprints
   - Consumes raw payload strings from Module A (01_attack_synthesis.py)
-  - Reads benign_distribution.json written by Module B (02_benign_enrichment.py)
+  - Reads traffic_distribution.json written by Module B (02_traffic_profiler.py)
     to align HttpMetadataDistribution with PCAP-observed UA/auth/referer rates
   - Also generates benign traffic via programmatic REST patterns + cloud LLM
   - Cloud LLM used ONLY for HTTP framing context, never for raw attack payloads
@@ -161,10 +161,16 @@ class HttpMetadataDistribution:
     # ── Instance state (overridable via configure()) ──────────────────────────
 
     def __init__(self) -> None:
-        self._pcap_uas:    list[str]   = []
-        self._pcap_ua_wts: list[float] = []
-        self._auth_prob:    float      = 0.8   # fraction of requests with auth
-        self._referer_prob: float      = 0.7   # fraction of requests with Referer
+        self._pcap_uas:        list[str]   = []
+        self._pcap_ua_wts:     list[float] = []
+        self._pcap_methods:    list[str]   = []
+        self._pcap_method_wts: list[float] = []
+        self._pcap_cts:        list[str]   = []
+        self._pcap_ct_wts:     list[float] = []
+        self._pcap_accepts:    list[str]   = []
+        self._pcap_accept_wts: list[float] = []
+        self._auth_prob:        float      = 0.8
+        self._referer_prob:     float      = 0.7
 
     def configure(self, profile: dict) -> None:
         """Apply PCAP-fitted distributions, overriding internal defaults."""
@@ -172,6 +178,18 @@ class HttpMetadataDistribution:
         if uas:
             self._pcap_uas    = list(uas.keys())
             self._pcap_ua_wts = list(uas.values())
+        methods = profile.get("methods", {})
+        if methods:
+            self._pcap_methods    = list(methods.keys())
+            self._pcap_method_wts = list(methods.values())
+        cts = {k: v for k, v in profile.get("content_types", {}).items() if k}
+        if cts:
+            self._pcap_cts    = list(cts.keys())
+            self._pcap_ct_wts = list(cts.values())
+        accepts = {k: v for k, v in profile.get("accept_headers", {}).items() if k}
+        if accepts:
+            self._pcap_accepts    = list(accepts.keys())
+            self._pcap_accept_wts = list(accepts.values())
         if (v := profile.get("has_auth")) is not None:
             self._auth_prob = float(v)
         if (v := profile.get("has_referer")) is not None:
@@ -218,6 +236,8 @@ class HttpMetadataDistribution:
         return rng.choice(self._REFERER_APP)
 
     def _sample_accept(self, rng: random.Random, has_body: bool) -> str:
+        if self._pcap_accepts:
+            return rng.choices(self._pcap_accepts, weights=self._pcap_accept_wts, k=1)[0]
         if has_body:
             return rng.choice(self._ACCEPT_API + self._ACCEPT_ANY)
         return rng.choice(self._ACCEPT_BROWSER + self._ACCEPT_API)
@@ -252,7 +272,10 @@ class HttpMetadataDistribution:
             h["Authorization"] = rng.choice(self._AUTH_NONEMPTY)(rng)
 
         if has_body:
-            h["Content-Type"] = rng.choice(self.CONTENT_TYPES)
+            if self._pcap_cts:
+                h["Content-Type"] = rng.choices(self._pcap_cts, weights=self._pcap_ct_wts, k=1)[0]
+            else:
+                h["Content-Type"] = rng.choice(self.CONTENT_TYPES)
 
         if extra:
             h.update(extra)
@@ -603,7 +626,12 @@ def _sample_endpoint(methods: list[str], rng: random.Random) -> tuple[str, str, 
     pool = [(m, p, ps) for m, p, ps in _ENDPOINT_REGISTRY if m in methods]
     if not pool:
         pool = list(_ENDPOINT_REGISTRY)
-    method, path_tmpl, params = rng.choice(pool)
+    if DIST._pcap_methods:
+        method_weight = {m: w for m, w in zip(DIST._pcap_methods, DIST._pcap_method_wts)}
+        weights = [method_weight.get(m, 0.01) for m, _, _ in pool]
+        method, path_tmpl, params = rng.choices(pool, weights=weights, k=1)[0]
+    else:
+        method, path_tmpl, params = rng.choice(pool)
     return method, path_tmpl.replace("{id}", str(rng.randint(1, 9999))), params
 
 
@@ -1259,7 +1287,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     # Load PCAP-fitted distributions from Module B if available
-    dist_profile = Path(cfg.paths.reports) / "metrics" / "benign_distribution.json"
+    dist_profile = Path(cfg.paths.reports) / "metrics" / "traffic_distribution.json"
     if dist_profile.exists():
         try:
             DIST.configure(json.loads(dist_profile.read_text()))
@@ -1267,7 +1295,7 @@ def run(args: argparse.Namespace) -> None:
         except Exception as exc:
             log.warning(f"Could not load benign distribution profile: {exc}")
     else:
-        log.info("No benign_distribution.json found — using internal header defaults")
+        log.info("No traffic_distribution.json found — using internal header defaults")
 
     out_dir = Path(cfg.paths.data_augmented) / "framed"
     out_dir.mkdir(parents=True, exist_ok=True)

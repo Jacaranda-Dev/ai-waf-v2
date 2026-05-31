@@ -1,20 +1,18 @@
 """
-stages/3_data_augmentation/02_benign_enrichment.py
---------------------------------------------------
-Module B — Benign Corpus Enrichment
-
-Merges: 10_benign_replay_traces
+stages/3_data_augmentation/02_traffic_profiler.py
+-------------------------------------------------
+Module B — Traffic Distribution Profiler
 
 Architecture:
-  - Extracts realistic metadata distributions (header frequency, path depth,
-    UA fingerprints) from CAIDA PCAP traces when available
-  - Uses those distributions to parameterize the programmatic REST generator
-    in Module C (03_request_framing.py) — "distribution alignment"
-  - Falls back gracefully to internal defaults when no PCAP trace is provided
-  - Writes a distribution profile JSON that Module C reads on startup
+  - Extracts realistic metadata distributions (method mix, UA fingerprints,
+    Accept/Content-Type headers, auth/referer rates) from CAIDA PCAP traces
+  - Writes traffic_distribution.json for Module C (03_request_framing.py),
+    which applies those distributions when framing BOTH attack and benign records
+  - Falls back to an empty profile when no PCAP is available;
+    Module C then uses its own internal defaults
 
 Run:
-    python stages/3_data_augmentation/02_benign_enrichment.py \
+    python stages/3_data_augmentation/02_traffic_profiler.py \
         --config config/pipeline.yaml [--pcap-dir /path/to/caida]
 """
 
@@ -24,12 +22,8 @@ import argparse
 import collections
 import json
 import random
-import uuid
 from pathlib import Path
 
-import pyarrow.parquet as pq
-
-from ai_waf_v2.data.schema import HttpRecord, records_to_table
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import check_output
@@ -200,73 +194,6 @@ class TrafficDistribution:
 # Aligned benign record generator
 # ─────────────────────────────────────────────────────────────────────────────
 
-_FALLBACK_UA = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    "PostmanRuntime/7.36.0",
-    "python-requests/2.31.0",
-]
-
-_PATH_TEMPLATES = [
-    "/api/v1/users", "/api/v1/products", "/api/v1/orders",
-    "/api/v1/search", "/api/v1/profile", "/api/v1/categories",
-    "/api/v1/reports", "/health", "/api/v2/data",
-]
-
-_BENIGN_PARAMS = [
-    "page=1&limit=20", "sort=created_at&order=desc",
-    "filter=active", "q=example+query",
-    "", "expand=details", "include=meta",
-]
-
-
-def make_aligned_benign(
-    dist: TrafficDistribution,
-    n:    int,
-    rng:  random.Random,
-) -> list[HttpRecord]:
-    """
-    Generate benign records whose method/UA/header distributions are
-    statistically aligned with the PCAP-observed distributions.
-    """
-    records = []
-    for _ in range(n):
-        method  = dist.sample_method(rng)
-        ua      = dist.sample_ua(rng, _FALLBACK_UA)
-        path    = rng.choice(_PATH_TEMPLATES)
-        qs      = rng.choice(_BENIGN_PARAMS) if method == "GET" else ""
-        has_body = method in ("POST", "PUT", "PATCH")
-        body    = json.dumps({"key": str(uuid.uuid4())[:8]}) if has_body else ""
-
-        headers: dict[str, str] = {
-            "Host":       "api.example.com",
-            "User-Agent": ua,
-            "Accept":     "application/json",
-        }
-        if has_body:
-            headers["Content-Type"] = "application/json"
-        if rng.random() < dist.has_auth:
-            headers["Authorization"] = f"Bearer eyJ{uuid.uuid4().hex[:16]}"
-        if rng.random() < dist.has_referer:
-            headers["Referer"] = "https://app.example.com/dashboard"
-
-        try:
-            records.append(HttpRecord(
-                id=str(uuid.uuid4()),
-                method=method,
-                path=path,
-                query_string=qs,
-                headers=json.dumps(headers),
-                body=body,
-                label=0,
-                attack_class="benign",
-                source="aug_benign_aligned",
-            ).build_raw())
-        except Exception as e:
-            log.debug(f"Record creation failed: {e}")
-
-    return records
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,22 +203,16 @@ def make_aligned_benign(
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
-    rng = random.Random(cfg.project.seed)
 
-    if check_output(
-        Path(cfg.paths.data_augmented) / "benign" / "benign_aligned.parquet",
-        args.force, "Stage 3.2 benign enrichment"
-    ):
+    dist_path = Path(cfg.paths.reports) / "metrics" / "traffic_distribution.json"
+
+    if check_output(dist_path, args.force, "Stage 3.2 benign enrichment"):
         return
 
-    benign_cfg  = getattr(cfg.augmentation, "benign", None)
-    replay_on   = getattr(benign_cfg, "replay_enabled", False) if benign_cfg else False
-    pcap_dir    = Path(args.pcap_dir or (getattr(benign_cfg, "replay_path", "") if benign_cfg else ""))
-    n_aligned   = getattr(benign_cfg, "aligned_samples", 5_000) if benign_cfg else 5_000
+    benign_cfg = getattr(cfg.augmentation, "benign", None)
+    replay_on  = getattr(benign_cfg, "replay_enabled", False) if benign_cfg else False
+    pcap_dir   = Path(args.pcap_dir or (getattr(benign_cfg, "replay_path", "") if benign_cfg else ""))
 
-    out_dir    = Path(cfg.paths.data_augmented) / "benign"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dist_path  = Path(cfg.paths.reports) / "metrics" / "benign_distribution.json"
     dist_path.parent.mkdir(parents=True, exist_ok=True)
 
     timer = StepTimer()
@@ -311,39 +232,26 @@ def run(args: argparse.Namespace) -> None:
     dist_path.write_text(json.dumps(dist.to_dict(), indent=2))
     log.info(f"Distribution profile written → {dist_path}")
 
-    # ── Generate distribution-aligned benign records ──────────────────────
-    log.info(f"Generating {n_aligned:,} distribution-aligned benign records...")
-    with timer.step("benign_generation"):
-        records = make_aligned_benign(dist, n_aligned, rng)
-
-    out_path = out_dir / "benign_aligned.parquet"
-    with timer.step("parquet_write"):
-        pq.write_table(records_to_table(records), out_path, compression="snappy")
-    log.info(f"Wrote {len(records):,} aligned benign records → {out_path}")
-
     stats = {
-        "n_pcap_flows":     len(flows),
-        "n_aligned_benign": len(records),
-        "pcap_dir":         str(pcap_dir) if pcap_dir else None,
-        "distribution":     dist.to_dict(),
-        "timings_s":        timer.timings,
+        "n_pcap_flows": len(flows),
+        "pcap_dir":     str(pcap_dir) if pcap_dir else None,
+        "distribution": dist.to_dict(),
+        "timings_s":    timer.timings,
     }
-    sp = Path(cfg.paths.reports) / "metrics" / "benign_enrichment.json"
+    sp = Path(cfg.paths.reports) / "metrics" / "traffic_profiler.json"
     sp.write_text(json.dumps(stats, indent=2))
 
     try:
         import mlflow
         from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
         init_experiment(cfg)
-        with mlflow.start_run(run_name="02_benign_enrichment"):
+        with mlflow.start_run(run_name="02_traffic_profiler"):
             mlflow.log_params({
-                "replay_enabled":   replay_on,
-                "pcap_dir":         str(pcap_dir) if pcap_dir else "none",
-                "n_aligned_target": n_aligned,
+                "replay_enabled": replay_on,
+                "pcap_dir":       str(pcap_dir) if pcap_dir else "none",
             })
             log_metrics_dict({
-                "n_pcap_flows":     float(len(flows)),
-                "n_aligned_benign": float(len(records)),
+                "n_pcap_flows": float(len(flows)),
             })
             timer.log_mlflow()
             mlflow.log_artifact(str(sp))
