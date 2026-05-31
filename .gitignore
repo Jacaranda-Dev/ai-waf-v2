@@ -81,3 +81,5 @@ papers/**/*.blg
 
 # Final Build (Optional: Keep if you want the PDF versioned, remove if not)
 # papers/*.pdf
+
+.claude
