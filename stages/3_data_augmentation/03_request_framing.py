@@ -1163,6 +1163,7 @@ def generate_llm_benign(
     model_path:      str   = "",
     ollama_base_url: str   = "http://localhost:11434",
     request_timeout: int   = 30,
+    batch_size:      int   = 3,
 ) -> tuple[list[HttpRecord], list[HttpRecord]]:
     """Generate benign (+ edge-case benign) HTTP records via an LLM.
 
@@ -1173,7 +1174,7 @@ def generate_llm_benign(
     edge : list[HttpRecord]
         Edge-case benign records (up to n_edge).
     """
-    BATCH = 10
+    BATCH = batch_size
     records: list[HttpRecord] = []
 
     log.info(f"LLM benign generation: target={n_benign:,}, edge_case={n_edge:,} via {provider}")
@@ -1215,10 +1216,17 @@ def generate_llm_benign(
                     prog.advance(t_benign, added)
                 else:
                     consecutive_failures += 1
-                    log.warning(f"LLM benign: response yielded no records ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                    log.warning(
+                        f"LLM benign: parse failure — response had {len(result)} item(s) "
+                        f"but none passed schema validation "
+                        f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                    )
             else:
                 consecutive_failures += 1
-                log.warning(f"LLM benign: call_llm returned None ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                log.warning(
+                    f"LLM benign: transport failure — call_llm returned None "
+                    f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                )
                 time.sleep(1.0)
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 log.warning(f"LLM benign: aborting after {MAX_CONSECUTIVE_FAILURES} consecutive failures — {len(records)}/{n_benign} records collected")
@@ -1251,10 +1259,17 @@ def generate_llm_benign(
                     prog.advance(t_edge, added)
                 else:
                     consecutive_failures += 1
-                    log.warning(f"LLM edge-case: response yielded no records ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                    log.warning(
+                        f"LLM edge-case: parse failure — response had {len(result)} item(s) "
+                        f"but none passed schema validation "
+                        f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                    )
             else:
                 consecutive_failures += 1
-                log.warning(f"LLM edge-case: call_llm returned None ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                log.warning(
+                    f"LLM edge-case: transport failure — call_llm returned None "
+                    f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                )
                 time.sleep(1.0)
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 log.warning(f"LLM edge-case: aborting after {MAX_CONSECUTIVE_FAILURES} consecutive failures — {len(edge_records)}/{n_edge} records collected")
@@ -1310,42 +1325,56 @@ def run(args: argparse.Namespace) -> None:
     all_records.extend(attack_records)
 
     # ── 2. Programmatic benign REST traffic ───────────────────────────────
-    n_rest = getattr(getattr(aug_cfg, "benign", None), "rest_samples", 10_000)
+    llm_cfg          = aug_cfg.llm
+    provider         = args.provider or llm_cfg.provider
+    benign_llm_ratio = max(0.0, min(1.0, getattr(aug_cfg, "benign_llm_ratio", 0.33)))
+
+    total_benign  = (getattr(getattr(aug_cfg, "benign", None), "rest_samples", 10_000)
+                     + llm_cfg.samples_benign)
+    n_llm         = round(total_benign * benign_llm_ratio) if provider else 0
+    n_programmatic = total_benign - n_llm
+
+    log.info(
+        f"Benign budget: {total_benign:,} total  "
+        f"({n_programmatic:,} programmatic + {n_llm:,} LLM,  ratio={benign_llm_ratio:.2f})"
+    )
+
     with timer.step("benign_rest"):
         with Progress(SpinnerColumn(), "[progress.description]{task.description}",
                       BarColumn(), MofNCompleteColumn(), TimeElapsedColumn()) as prog:
-            task = prog.add_task("Benign REST records", total=n_rest)
+            task = prog.add_task("Benign REST records", total=n_programmatic)
             benign_rest = []
-            for _ in range(n_rest):
+            for _ in range(n_programmatic):
                 benign_rest.append(_make_benign_record(rng))
                 prog.advance(task)
     all_records.extend(benign_rest)
     log.info(f"Generated {len(benign_rest):,} programmatic benign REST records")
 
     # ── 3. Optional: LLM benign framing ──────────────────────────────────
-    llm_cfg  = aug_cfg.llm
-    provider = args.provider or llm_cfg.provider
-
     llm_standard: list[HttpRecord] = []
     llm_edge:     list[HttpRecord] = []
-    if provider:
+    if provider and n_llm > 0:
         with timer.step("llm_benign"):
             llm_standard, llm_edge = generate_llm_benign(
                 provider        = provider,
                 model           = llm_cfg.model,
-                max_tok         = llm_cfg.max_tokens,
-                n_benign        = llm_cfg.samples_benign,
+                max_tok         = llm_cfg.max_tokens_benign,
+                n_benign        = n_llm,
                 n_edge          = llm_cfg.samples_edge_case,
                 rng             = rng,
                 temperature     = llm_cfg.temperature,
                 model_path      = llm_cfg.model_path,
                 ollama_base_url = llm_cfg.ollama_base_url,
                 request_timeout = llm_cfg.request_timeout,
+                batch_size      = llm_cfg.batch_size_benign,
             )
         all_records.extend(llm_standard)
         all_records.extend(llm_edge)
     else:
-        log.info("LLM framing skipped (no provider configured)")
+        log.info(
+            "LLM benign framing skipped"
+            + (" (no provider configured)" if not provider else " (benign_llm_ratio=0)")
+        )
 
     # ── 4. Write ──────────────────────────────────────────────────────────
     out_path = out_dir / "framed_records.parquet"
@@ -1363,13 +1392,14 @@ def run(args: argparse.Namespace) -> None:
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps({
         "n_attack_reframed":  len(attack_records),
-        "n_benign_rest":      len(benign_rest),
-        "n_llm_standard":     len(llm_standard),
-        "n_llm_edge_case":    len(llm_edge),
-        "total":              len(all_records),
-        "llm_provider":       provider or "none",
-        "llm_model":          llm_cfg.model or "none",
-        "timings_s":          timer.timings,
+        "n_benign_programmatic": len(benign_rest),
+        "n_benign_llm_standard": len(llm_standard),
+        "n_benign_llm_edge":     len(llm_edge),
+        "benign_llm_ratio":      benign_llm_ratio,
+        "total":                 len(all_records),
+        "llm_provider":          provider or "none",
+        "llm_model":             llm_cfg.model or "none",
+        "timings_s":             timer.timings,
     }, indent=2))
 
     try:
@@ -1380,7 +1410,8 @@ def run(args: argparse.Namespace) -> None:
             mlflow.log_params({
                 "llm_provider":   provider or "none",
                 "llm_model":      llm_cfg.model or "none",
-                "n_rest_samples": n_rest,
+                "n_programmatic":   n_programmatic,
+                "benign_llm_ratio": benign_llm_ratio,
             })
             log_metrics_dict({
                 "n_attack_reframed": float(len(attack_records)),

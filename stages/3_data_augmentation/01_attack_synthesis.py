@@ -474,13 +474,53 @@ def _parse_payload_response(text: str) -> list[str]:
     return results
 
 
+# Realistic-looking hostnames used to replace textbook placeholders.
+# Drawn from plausible CDN, internal-service, and callback-server naming patterns.
+_REALISTIC_DOMAIN_POOL: list[str] = [
+    "cdn-assets.io",            "api-gateway.prod.net",     "metrics.infra.corp",
+    "storage.prod-east.net",    "webhook.integrations.io",  "auth.services.local",
+    "reporting.analytics.net",  "upload.media-server.net",  "proxy.internal.corp",
+    "payments-api.gateway.io",  "collector.telemetry.io",   "assets.frontend.net",
+    "queue.workers.io",         "logs.ops.internal",        "static.cdn-edge.net",
+    "api.notifications.net",    "sync.data-pipeline.io",    "cache.backend.local",
+    "export.reports.corp",      "ingest.events.io",         "fetch.microservice.net",
+    "relay.mail-server.net",    "tracker.monitoring.corp",  "broker.msg-bus.internal",
+]
+
+# Textbook placeholder strings the LLM tends to emit despite prompt instructions.
+_PLACEHOLDER_TERMS: list[str] = [
+    "evil.com", "evil.org",
+    "attacker.com", "attacker.org",
+    "malicious.com", "malicious.org",
+    "hacker.com", "hacker.org",
+    "example.com", "example.org",
+    "victim.com", "victim.org",
+    "bad.com", "bad.org",
+    "foo.com", "bar.com",
+    "hack.me", "target.com",
+]
+
+
+def _replace_placeholders(payload: str, rng: random.Random) -> str:
+    """Replace textbook placeholder hostnames with realistic-looking alternatives."""
+    result = payload
+    for term in _PLACEHOLDER_TERMS:
+        if term in result.lower():
+            replacement = rng.choice(_REALISTIC_DOMAIN_POOL)
+            result = re.sub(re.escape(term), replacement, result, flags=re.IGNORECASE)
+    return result
+
+
 class LlmGenerator(BaseGenerator):
     """Generates payloads via a configurable LLM backend (local, Ollama, Anthropic, Google)."""
 
     SYSTEM = (
         "You are a security dataset generator for WAF classifier training. "
         "Output ONLY a JSON array of payload strings — no markdown, no explanation, no commentary. "
-        'Example format: ["payload1", "payload2", "payload3"]'
+        'Example format: ["payload1", "payload2", "payload3"]\n'
+        "Use realistic-looking hostnames, IPs, paths, and parameter values. "
+        "Avoid textbook placeholders such as evil.com, example.com, attacker.com, "
+        "malicious.com, victim.com, or generic words like 'sensitive', 'secret', 'test'."
     )
 
     BATCH_SIZE = 10  # payloads requested per model call
@@ -577,17 +617,25 @@ class LlmGenerator(BaseGenerator):
                 request_timeout  = self._request_timeout,
             )
             if text:
-                before = len(payloads)
-                payloads.extend(_parse_payload_response(text))
+                before  = len(payloads)
+                parsed  = _parse_payload_response(text)
+                cleaned = [_replace_placeholders(p, rng) for p in parsed]
+                payloads.extend(cleaned)
                 if len(payloads) > before:
                     consecutive_failures = 0
                     log.info(f"[{attack_class}] {len(payloads)}/{n} payloads collected")
                 else:
                     consecutive_failures += 1
-                    log.warning(f"[{attack_class}] response yielded no payloads ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                    log.warning(
+                        f"[{attack_class}] parse failure: response returned {len(parsed)} item(s) "
+                        f"but none were usable ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                    )
             else:
                 consecutive_failures += 1
-                log.warning(f"[{attack_class}] call_llm returned None ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})")
+                log.warning(
+                    f"[{attack_class}] transport failure: call_llm returned None "
+                    f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                )
                 time.sleep(1.0)
 
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -667,6 +715,7 @@ class AugmentationGovernor:
         double_encode_prob:    float = 0.30,
         double_obfuscate_prob: float = 0.30,
         rng_seed:              int   = 42,
+        llm_ratio:             float = 0.5,
     ):
         self.target                = target_per_class
         self.generators            = generators
@@ -674,6 +723,7 @@ class AugmentationGovernor:
         self.double_encode_prob    = double_encode_prob
         self.double_obfuscate_prob = double_obfuscate_prob
         self.rng                   = random.Random(rng_seed)
+        self.llm_ratio             = max(0.0, min(1.0, llm_ratio))
 
         self.class_counts: dict[str, int] = {}
         if inventory_path.exists():
@@ -719,12 +769,24 @@ class AugmentationGovernor:
             log.warning(f"No seed generators available for '{attack_class}'")
             return []
 
-        per_gen = max(1, -(-n_needed // len(seed_gens)))  # ceiling division
+        has_llm     = any(g.name == "llm"     for g in seed_gens)
+        has_grammar = any(g.name == "grammar" for g in seed_gens)
+        if has_llm and has_grammar:
+            llm_n     = round(n_needed * self.llm_ratio)
+            grammar_n = n_needed - llm_n
+        elif has_llm:
+            llm_n, grammar_n = n_needed, 0
+        else:
+            llm_n, grammar_n = 0, n_needed
+        quota = {"llm": llm_n, "grammar": grammar_n}
+
         raw_seeds: list[tuple[str, str]] = []  # (payload, generator_name)
         for g in seed_gens:
-            raw_seeds.extend(
-                (p, g.name) for p in g.generate_payloads(attack_class, per_gen, self.rng)
-            )
+            n = quota[g.name]
+            if n > 0:
+                raw_seeds.extend(
+                    (p, g.name) for p in g.generate_payloads(attack_class, n, self.rng)
+                )
 
         # Pad with random duplicates if a generator fell short (e.g. LLM failures)
         while len(raw_seeds) < n_needed:
@@ -840,6 +902,7 @@ def run(args: argparse.Namespace) -> None:
     chain_len             = getattr(aug_cfg, "chain_length", 2)
     double_encode_prob    = getattr(aug_cfg, "double_encode_prob",    0.30)
     double_obfuscate_prob = getattr(aug_cfg, "double_obfuscate_prob", 0.30)
+    llm_ratio             = getattr(aug_cfg, "llm_ratio",             0.50)
 
     splits_dir     = Path(cfg.paths.data_splits)
     inventory_path = Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json"
@@ -881,6 +944,7 @@ def run(args: argparse.Namespace) -> None:
         double_encode_prob=double_encode_prob,
         double_obfuscate_prob=double_obfuscate_prob,
         rng_seed=cfg.project.seed,
+        llm_ratio=llm_ratio,
     )
 
     timer = StepTimer()
@@ -942,6 +1006,7 @@ def run(args: argparse.Namespace) -> None:
         "chain_length":          chain_len,
         "double_encode_prob":    double_encode_prob,
         "double_obfuscate_prob": double_obfuscate_prob,
+        "llm_ratio":             llm_ratio,
         "generators_used":       [g.name for g in generators],
         "llm_provider":          llm_provider,
         "llm_model":             llm_model,

@@ -276,12 +276,15 @@ class QualityPipeline:
         self,
         records:    list[HttpRecord],
         max_workers: int = 4,
-    ) -> tuple[list[HttpRecord], list[tuple[HttpRecord, str]]]:
+    ) -> tuple[list[HttpRecord], list[tuple[HttpRecord, str]], dict]:
         """
         Execute all passes.
         Pass 1 (format) runs in parallel.
         Pass 2 (tokenizer) runs in parallel.
         Pass 3 (dedup) and Pass 4 (label) run single-threaded (stateful / policy).
+
+        Returns (passed, rejected, pass4_stats) where pass4_stats breaks down
+        the two distinct flagged-but-kept categories from Pass 4.
         """
         passed:   list[HttpRecord]              = []
         rejected: list[tuple[HttpRecord, str]]  = []
@@ -332,7 +335,7 @@ class QualityPipeline:
 
         # ── Pass 4: label consistency (sequential — policy) ──
         log.info("Pass 4/4 — CRS-aligned label consistency check...")
-        n_flagged = n_quarantined = 0
+        n_quarantined = n_flagged_evasive = n_flagged_edge = 0
         after_label: list[HttpRecord] = []
         for r in after_dedup:
             res, action = self.label_check(r)
@@ -340,22 +343,37 @@ class QualityPipeline:
                 rejected.append((r, res.reason))
                 n_quarantined += 1
             elif action == "flag":
-                # Tag source but keep in training set
                 object.__setattr__(r, "source", r.source + "_crs_flagged")
                 after_label.append(r)
-                n_flagged += 1
+                if res.reason == "conflict_flagged":
+                    n_flagged_edge += 1       # label=0, CRS hit, edge-case source
+                else:
+                    n_flagged_evasive += 1    # label=1, no CRS hit (evasive attack)
             else:
                 after_label.append(r)
-        log.info(f"  ✓ {len(after_label):,}  quarantined={n_quarantined:,}  flagged(kept)={n_flagged:,}")
+        n_flagged = n_flagged_evasive + n_flagged_edge
+        log.info(
+            f"  ✓ {len(after_label):,}  quarantined={n_quarantined:,}  "
+            f"flagged(kept)={n_flagged:,}  "
+            f"[evasive_attack={n_flagged_evasive:,}  benign_edge={n_flagged_edge:,}]"
+        )
 
         # ── Leakage guard ──────────────────────────────────────────────────
+        n_leaked = 0
         if self.holdout_lsh:
             log.info("Leakage guard — checking proximity to test/canary splits...")
             after_label, n_leaked = _leakage_check(after_label, self.holdout_lsh)
             log.info(f"  Removed {n_leaked:,} records too similar to holdout splits")
 
         passed = after_label
-        return passed, rejected
+        pass4_stats = {
+            "n_quarantined":     n_quarantined,
+            "n_flagged":         n_flagged,
+            "n_flagged_evasive": n_flagged_evasive,
+            "n_flagged_edge":    n_flagged_edge,
+            "n_leaked":          n_leaked,
+        }
+        return passed, rejected, pass4_stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -363,12 +381,19 @@ class QualityPipeline:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_all_augmented(aug_dir: Path, base_deduped: Path) -> list[HttpRecord]:
-    parquet_files = list(aug_dir.rglob("*.parquet"))
-    if base_deduped.exists():
-        parquet_files.append(base_deduped)
+    # Load only the final stage outputs — synthesis is an intermediate artifact
+    # superseded by framing (same payloads, stub headers replaced with realistic ones).
+    # Glob-scanning aug_dir would include both and double-count every attack record.
+    explicit = [
+        aug_dir / "framed" / "framed_records.parquet",
+        base_deduped,
+    ]
 
     dfs = []
-    for fp in parquet_files:
+    for fp in explicit:
+        if not fp.exists():
+            log.warning(f"Expected input not found, skipping: {fp}")
+            continue
         try:
             dfs.append(pq.read_table(fp).to_pandas())
         except Exception as e:
@@ -439,7 +464,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     with timer.step("quality_filter"):
-        passed, rejected = pipeline.run(records, max_workers=args.workers)
+        passed, rejected, pass4_stats = pipeline.run(records, max_workers=args.workers)
 
     # ── Write outputs ─────────────────────────────────────────────────────
     filtered_dir = Path(cfg.paths.data_filtered)
@@ -455,9 +480,25 @@ def run(args: argparse.Namespace) -> None:
             compression="snappy",
         )
 
+    def _write_with_reason(pairs: list[tuple[HttpRecord, str]], name: str):
+        """Write rejected records including the rejection_reason column."""
+        if not pairs:
+            return
+        rows = [{"rejection_reason": reason, **r.model_dump()} for r, reason in pairs]
+        pq.write_table(
+            pa.Table.from_pandas(pd.DataFrame(rows), preserve_index=False),
+            filtered_dir / name,
+            compression="snappy",
+        )
+
     with timer.step("parquet_write"):
-        _write(passed,                 "filtered.parquet")
-        _write([r for r, _ in rejected], "rejected.parquet")
+        _write(passed, "filtered.parquet")
+        _write_with_reason(rejected, "rejected.parquet")
+        # Quarantined = Pass 4 label conflicts only — benign records that triggered
+        # CRS rules. Isolated into their own file for manual inspection.
+        quarantined = [(r, reason) for r, reason in rejected
+                       if reason.startswith("label_conflict")]
+        _write_with_reason(quarantined, "quarantined.parquet")
 
     n_total    = len(records)
     n_passed   = len(passed)
@@ -466,10 +507,29 @@ def run(args: argparse.Namespace) -> None:
 
     log.info(
         f"\nQuality gate complete:\n"
-        f"  Input:    {n_total:,}\n"
-        f"  Passed:   {n_passed:,}\n"
-        f"  Rejected: {n_rejected:,} ({rej_rate*100:.1f}%)"
+        f"  Input:      {n_total:,}\n"
+        f"  Passed:     {n_passed:,}  → {filtered_dir}/filtered.parquet\n"
+        f"  Rejected:   {n_rejected:,} ({rej_rate*100:.1f}%)  → rejected.parquet\n"
+        f"  Quarantined:{len(quarantined):,}  → quarantined.parquet"
     )
+    if quarantined:
+        log.warning(
+            f"\n{'─'*60}\n"
+            f"  MANUAL REVIEW REQUIRED: {filtered_dir}/quarantined.parquet\n"
+            f"{'─'*60}\n"
+            f"  {len(quarantined):,} record(s) are labeled benign (label=0) but triggered\n"
+            f"  CRS rules. Each could be one of two things:\n"
+            f"\n"
+            f"    A) Genuinely benign — CRS false positive.\n"
+            f"       Action: restore to training set (these are valuable hard negatives).\n"
+            f"\n"
+            f"    B) Mislabeled — actually malicious, CRS correctly caught it.\n"
+            f"       Action: re-label to 1 or discard.\n"
+            f"\n"
+            f"  Use the review notebook to inspect and apply decisions:\n"
+            f"    notebooks/04_quarantine_review.ipynb\n"
+            f"{'─'*60}"
+        )
 
     def _count_reasons(rejected_list):
         counts: dict[str, int] = {}
@@ -484,6 +544,13 @@ def run(args: argparse.Namespace) -> None:
         "n_rejected":        n_rejected,
         "rejection_rate":    round(rej_rate, 4),
         "rejection_reasons": _count_reasons(rejected),
+        "flagged_kept": {
+            "total":           pass4_stats["n_flagged"],
+            "evasive_attack":  pass4_stats["n_flagged_evasive"],
+            "benign_edge":     pass4_stats["n_flagged_edge"],
+        },
+        "n_quarantined":     pass4_stats["n_quarantined"],
+        "n_leaked":          pass4_stats["n_leaked"],
         "crs_heuristic":     "ModSecurity CRS aligned (paranoia level 1)",
         "leakage_threshold": 0.70,
         "timings_s":         timer.timings,

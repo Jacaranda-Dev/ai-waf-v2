@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 from datasketch import MinHash, MinHashLSH
 from sklearn.model_selection import train_test_split
@@ -290,7 +291,7 @@ def run(args: argparse.Namespace) -> None:
             sdf = sdf.drop(columns=_DROP_COLS, errors="ignore").copy()
             sdf["split"] = name
             pq.write_table(
-                pq.Table.from_pandas(sdf, preserve_index=False),
+                pa.Table.from_pandas(sdf, preserve_index=False),
                 splits_dir / f"{name}.parquet",
                 compression="snappy",
             )

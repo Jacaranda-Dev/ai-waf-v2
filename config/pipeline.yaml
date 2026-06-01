@@ -122,6 +122,9 @@ augmentation:
     targets: ["sqli", "xss", "lfi", "rfi", "ssrf", "cmdi"]
     samples_per_class: 5000
 
+  llm_ratio: 0.5                         # fraction of seed payloads from LLM (0.0 = grammar only, 1.0 = LLM only)
+  benign_llm_ratio: 0.33                 # fraction of total benign records from LLM (0.0 = programmatic only, 1.0 = LLM only)
+
   llm:
     provider:        "${LLM_PROVIDER}"   # anthropic | google | local | ollama
     model:           "mistral"                  # model name/tag for cloud and ollama providers
@@ -129,7 +132,9 @@ augmentation:
     ollama_base_url:  "http://localhost:11434"
     request_timeout:  30                 # socket timeout in seconds (ollama only)
     temperature:      0.9
-    max_tokens:       512
+    max_tokens:       512                # Stage 3.1 attack payloads (short strings)
+    max_tokens_benign: 768               # Stage 3.3 benign records (3 objects × ~200 tokens)
+    batch_size_benign: 3                 # objects per LLM call in Stage 3.3 (keep small for local models)
     samples_per_gap_class: 1000          # Module A: payloads per gap class
     samples_benign:  10000               # Module B: standard benign records
     samples_edge_case: 2000              # Module B: edge-case benign records

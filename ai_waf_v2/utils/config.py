@@ -128,8 +128,10 @@ class AugLlmConfig(BaseModel):
     model_path:       str   = ""            # GGUF path; required for provider=local
     ollama_base_url:  str   = "http://localhost:11434"
     temperature:      float = 0.9
-    max_tokens:       int   = 512
-    request_timeout:  int   = 30            # socket timeout in seconds (ollama only)
+    max_tokens:        int   = 512           # attack payload generation (short strings)
+    max_tokens_benign: int   = 768           # benign record generation (full JSON objects)
+    batch_size_benign: int   = 3             # objects per LLM call in stage 3.3
+    request_timeout:   int   = 30            # socket timeout in seconds (ollama only)
     # Module A (attack synthesis)
     samples_per_gap_class: int = 1000
     # Module B (benign framing)
@@ -151,9 +153,11 @@ class AugFilterConfig(BaseModel):
 
 
 class AugmentationConfig(BaseModel):
-    min_samples_per_class: int = 500   # classes below this are flagged in the corpus report
-    target_per_class:      int = 5000  # governor fills gaps up to this count
-    chain_length:          int = 2     # mutation chain depth in attack synthesis
+    min_samples_per_class: int   = 500   # classes below this are flagged in the corpus report
+    target_per_class:      int   = 5000  # governor fills gaps up to this count
+    chain_length:          int   = 2     # mutation chain depth in attack synthesis
+    llm_ratio:             float = 0.5   # stage 3.1: fraction of seed payloads from LLM
+    benign_llm_ratio:      float = 0.33  # stage 3.3: fraction of total benign from LLM
     rules:      AugRulesConfig   = Field(default_factory=AugRulesConfig)
     grammar:    AugGrammarConfig = Field(default_factory=AugGrammarConfig)
     llm:        AugLlmConfig     = Field(default_factory=AugLlmConfig)

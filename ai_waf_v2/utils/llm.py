@@ -112,8 +112,11 @@ def _call_anthropic(
             messages=[{"role": "user", "content": user}],
         )
         return msg.content[0].text
+    except ImportError:
+        log.warning("anthropic package not installed — pip install anthropic")
+        return None
     except Exception as e:
-        log.warning(f"Anthropic API error: {e}")
+        log.warning(f"Anthropic API error ({type(e).__name__}): {e}")
         return None
 
 
@@ -136,8 +139,11 @@ def _call_google(
             generation_config={"max_output_tokens": max_tokens, "temperature": temperature},
         )
         return rsp.text
+    except ImportError:
+        log.warning("google-generativeai package not installed — pip install google-generativeai")
+        return None
     except Exception as e:
-        log.warning(f"Google API error: {e}")
+        log.warning(f"Google API error ({type(e).__name__}): {e}")
         return None
 
 
@@ -171,7 +177,7 @@ def _call_local(
         )
         return None
     except Exception as e:
-        log.warning(f"Local LLM error: {e}")
+        log.warning(f"Local LLM error ({type(e).__name__}): {e}")
         return None
 
 
@@ -184,12 +190,14 @@ def _call_ollama(
     base_url:    str,
     timeout:     int = 30,
 ) -> str | None:
+    import socket
+    import urllib.error
+    import urllib.request
+
     if not model:
         log.warning("Ollama provider requires a model name — set augmentation.llm.model in pipeline.yaml")
         return None
     try:
-        import urllib.error
-        import urllib.request
         payload = json.dumps({
             "model":  model,
             "stream": False,
@@ -209,9 +217,27 @@ def _call_ollama(
             data = json.loads(resp.read())
         return data["message"]["content"]
     except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        log.warning(f"Ollama API error {e.code}: {body}")
+        body = e.read().decode(errors="replace")[:300]
+        if e.code == 404:
+            log.warning(f"Ollama model not found (404): model={model!r} — run: ollama pull {model}")
+        elif e.code == 503:
+            log.warning(f"Ollama model loading/busy (503): model={model!r}")
+        else:
+            log.warning(f"Ollama HTTP {e.code}: {body}")
+        return None
+    except urllib.error.URLError as e:
+        reason = str(e.reason).lower()
+        if "refused" in reason:
+            log.warning(f"Ollama connection refused — is Ollama running at {base_url}?")
+        else:
+            log.warning(f"Ollama connection error: {e.reason}")
+        return None
+    except (TimeoutError, socket.timeout):
+        log.warning(f"Ollama request timed out after {timeout}s (model={model!r}, max_tokens={max_tokens})")
+        return None
+    except json.JSONDecodeError as e:
+        log.warning(f"Ollama returned invalid JSON: {e}")
         return None
     except Exception as e:
-        log.warning(f"Ollama API error: {e}")
+        log.warning(f"Ollama unexpected error ({type(e).__name__}): {e}")
         return None

@@ -173,7 +173,7 @@ def run(args: argparse.Namespace) -> None:
     gini_combined = gini_coefficient(dict(combined_class_counts))
 
     # ── Augmentation target output for Governor ────────────────────────────
-    target_per_class = getattr(getattr(cfg.augmentation, None, None), "target_per_class", 5_000) if hasattr(cfg, "augmentation") else 5_000
+    target_per_class = getattr(cfg.augmentation, "target_per_class", 5_000) if hasattr(cfg, "augmentation") else 5_000
     augmentation_targets = {
         cls: max(0, target_per_class - combined_class_counts.get(cls, 0))
         for cls in required

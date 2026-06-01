@@ -1,5 +1,5 @@
 """
-stages/3_data_augmentation/15_augmentation_probe.py
+stages/3_data_augmentation/05_augmentation_probe.py
 ----------------------------------------------------
 Enhanced Augmentation Probe  (replaces original LogReg/TF-IDF probe)
 
@@ -60,17 +60,19 @@ class CharCNNProbe(nn.Module):
       - Still fast enough for a probe (< 60s on CPU for 100k samples).
     """
 
-    def __init__(self, n_features: int = 65_536, n_filters: int = 128, kernel_size: int = 5):
+    def __init__(self, n_features: int = 16_384, n_filters: int = 128, kernel_size: int = 5):
         super().__init__()
         # Reshape the flat hash vector into a 2D sequence for 1D conv
         # We treat blocks of `kernel_size` features as one "token position"
         self.n_features  = n_features
         self.kernel_size = kernel_size
-        self.seq_len     = n_features // kernel_size  # e.g. 65536 // 5 ≈ 13107
+        # stride=4 in conv1 reduces spatial dim by 4× immediately, keeping peak
+        # activation memory at [B, n_filters, n_features/4] instead of [B, n_filters, n_features]
+        self.seq_len     = (n_features // 4) // kernel_size
 
-        self.conv1 = nn.Conv1d(1, n_filters, kernel_size=7, padding=3)
+        self.conv1 = nn.Conv1d(1, n_filters, kernel_size=7, stride=4, padding=3)
         self.conv2 = nn.Conv1d(n_filters, n_filters // 2, kernel_size=5, padding=2)
-        self.pool  = nn.AdaptiveMaxPool1d(1)
+        self.pool  = nn.AdaptiveAvgPool1d(1)
         self.fc    = nn.Linear(n_filters // 2, 1)
         self.drop  = nn.Dropout(0.3)
         self.act   = nn.GELU()
@@ -85,7 +87,7 @@ class CharCNNProbe(nn.Module):
         return self.fc(x).squeeze(-1) # [B]
 
 
-def _vectorize(texts: list[str], n_features: int = 65_536) -> np.ndarray:
+def _vectorize(texts: list[str], n_features: int = 16_384) -> np.ndarray:
     """Hashed char-ngram features (1-4 grams) → dense float32 array."""
     vec = HashingVectorizer(
         analyzer="char_wb",
