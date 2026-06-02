@@ -20,28 +20,20 @@ data/filtered/**
 data/splits/**
 !data/**/.gitkeep
 
-# models
-models/**/*.pt
-models/**/*.parquet
-models/**/*.ckpt
-models/**/*.weights
-models/**/*.onnx
-models/**/*.engine
-models/**/*.bin
+# models — all generated artifacts; push to HF Hub via make push_hub
+models/**
 !models/**/.gitkeep
 
-# tokenizers (large files)
-tokenizers/**/*.model
-tokenizers/**/*.vocab
+# tokenizers — trained from corpus; push to HF Hub
+tokenizers/**
 !tokenizers/**/.gitkeep
 
 # mlflow
 mlruns/
 
-# reports (generated)
-reports/metrics/*.json
-reports/figures/*.png
-reports/latency/*.json
+# reports — all generated outputs
+reports/**
+!reports/**/.gitkeep
 
 # Logs and Experiment Tracking
 runs/
