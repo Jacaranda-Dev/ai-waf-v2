@@ -191,13 +191,6 @@ def run(args: argparse.Namespace) -> None:
     log.info(f"Student: {n_student:,} parameters")
     log.info(f"Compression ratio: {compression:.1f}×")
 
-    # ── Temperature scheduler ─────────────────────
-    T_max         = getattr(dcfg, "temperature_max", dcfg.temperature)
-    T_min         = getattr(dcfg, "temperature_min", max(dcfg.temperature * 0.25, 1.0))
-    n_epochs      = dcfg.epochs
-    temp_sched    = TemperatureScheduler(T_max=T_max, T_min=T_min, total_epochs=n_epochs)
-    log.info(f"Temperature schedule: {T_max} → {T_min} over {n_epochs} epochs")
-
     # ── Data ──────────────────────────────────────
     collator   = WafCollator(pad_token_id=tokenizer.pad_token_id, max_seq_len=cfg.tokenizer.seq_len)
     splits_dir = cfg.paths.data_splits
@@ -213,6 +206,13 @@ def run(args: argparse.Namespace) -> None:
             batch_size=dcfg.batch_size * 2,
             shuffle=False, collate_fn=collator, num_workers=2, pin_memory=True,
         )
+
+    # ── Temperature scheduler ─────────────────────
+    T_max      = getattr(dcfg, "temperature_max", dcfg.temperature)
+    T_min      = getattr(dcfg, "temperature_min", max(dcfg.temperature * 0.25, 1.0))
+    n_epochs   = max(1, dcfg.max_steps // len(train_loader))
+    temp_sched = TemperatureScheduler(T_max=T_max, T_min=T_min, total_epochs=n_epochs)
+    log.info(f"Temperature schedule: {T_max} → {T_min} over {n_epochs} epochs")
 
     # ── Training ──────────────────────────────────
     init_experiment(cfg)
@@ -239,7 +239,7 @@ def run(args: argparse.Namespace) -> None:
             train_loader=train_loader,
             val_loader=val_loader,
             device=device,
-            temperature_scheduler=temp_sched,   # trainer must accept this kwarg
+            temperature_scheduler=temp_sched,
         )
         with timer.step("distillation"):
             trainer.train()

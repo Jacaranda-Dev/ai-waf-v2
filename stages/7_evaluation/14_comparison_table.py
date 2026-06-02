@@ -225,22 +225,23 @@ def run(args: argparse.Namespace) -> None:
 
     # ── Save JSON (for downstream scripts) ───────────────────────────────────
     json_path = metrics_dir / "master_comparison_table.json"
-    json_path.write_text(json.dumps(df.to_dict(orient="records"), indent=2, default=str))
+    json_path.write_text(json.dumps(
+        df.where(df.notna(), other=None).to_dict(orient="records"), indent=2
+    ))
     log.info(f"Master comparison table (JSON) saved to {json_path}")
 
     # ── Pretty-print to log ───────────────────────────────────────────────────
     pd.set_option("display.max_columns", None)
-    pd.set_option("display.width", 140)
-    key_cols = ["Model", "F1", "AUC-PR", "FPR", "p99_ms_bs1", "p99_9_ms_bs1",
-                "jitter_std_ms", "RPS_bs1", "mean_evasion_rate", "disk_mb"]
+    pd.set_option("display.width", 300)
+    key_cols = ["Model", "disk_mb", "F1", "AUC-PR", "FPR", "p99_ms_bs1",
+                "p99_9_ms_bs1", "jitter_std_ms", "RPS_bs1", "mean_evasion_rate"]
     display_cols = [c for c in key_cols if c in df.columns]
     log.info(f"\n{df[display_cols].to_string(index=False)}")
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="14_comparison_table"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="14_comparison_table") as _run:
             mlflow.log_params({
                 "n_models_in_table": len(rows),
                 "top_model":         df.iloc[0]["Model"] if len(df) > 0 else "N/A",

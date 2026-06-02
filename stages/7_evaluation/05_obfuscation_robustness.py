@@ -1,4 +1,4 @@
-"""Stage 6.4b — Obfuscation robustness: chained multi-tamper evaluation."""
+"""Stage 7.5 — Obfuscation robustness: chained multi-tamper evaluation."""
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
@@ -46,12 +46,10 @@ def run(args):
             chained_records = []
             for r in records:
                 d = r.model_dump(); d["id"] = str(uuid.uuid4())
-                qs = t2_fn(t1_fn(r.query_string, rng), rng)
-                bd = t2_fn(t1_fn(r.body, rng), rng) if r.body else ""
+                qs = t2_fn(t1_fn(r.query_string))
+                bd = t2_fn(t1_fn(r.body)) if r.body else ""
                 d["query_string"] = qs; d["body"] = bd; d["source"] = f"chain_{t1_name}+{t2_name}"
                 chained_records.append(HttpRecord(**d).build_raw())
-            res = evaluator.run(chained_records, tamper_scripts=[], evasion_wordlists=[])
-            # Just measure detection directly
             preds, probs, lbls = evaluator._predict_records(chained_records, [1]*len(chained_records))
             from ai_waf_v2.eval.metrics import compute_metrics
             m = compute_metrics(preds, probs, lbls)
@@ -66,9 +64,8 @@ def run(args):
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="05_obfuscation_robustness"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="05_obfuscation_robustness") as _run:
             mlflow.log_params({
                 "n_records_cap":   1000,
                 "n_chains_tested": len(chained_results),

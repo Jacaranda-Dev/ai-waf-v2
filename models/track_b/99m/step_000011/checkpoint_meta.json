@@ -1,0 +1,15 @@
+{
+  "epoch": 11,
+  "T": 4.0,
+  "alpha": 0.3,
+  "train_kl": 0.00122,
+  "loss": 0.021721137025451753,
+  "accuracy": 0.99572,
+  "macro_f1": 0.99442,
+  "per_class_f1": {
+    "0": 0.99172,
+    "1": 0.99711
+  },
+  "step": 11,
+  "experiment_type": "track_b_99m"
+}

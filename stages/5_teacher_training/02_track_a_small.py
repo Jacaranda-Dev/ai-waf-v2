@@ -27,6 +27,7 @@ import mlflow
 import pyarrow.parquet as pq
 import torch
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 from ai_waf_v2.utils.config import load_config
@@ -36,7 +37,7 @@ from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 
 from checkpoint_utils import CheckpointTracker
-from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, run_epoch
+from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, flatten_metrics, run_epoch
 
 log = get_logger(__name__)
 
@@ -104,14 +105,14 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet":   "make data_augment_all",
     })
     if check_output(
-        Path(cfg.model.track_a_small.output_dir) / "checkpoint_meta.json",
+        Path(cfg.model.track_a_small.output_dir) / "latest" / "checkpoint_meta.json",
         args.force, "Stage 5.2 Track A small training"
     ):
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     mcfg   = cfg.model.track_a_small   # ← distinct config key from 01
-    tcfg   = cfg.training
+    tcfg   = cfg.training.track_a
     timer  = StepTimer()
 
     log.info(f"Training {EXPERIMENT_TYPE} | device={device} | base={mcfg.base_model}")
@@ -138,65 +139,70 @@ def run(args: argparse.Namespace) -> None:
     model = TrackASmallModel(
         base_model=mcfg.base_model,
         num_labels=mcfg.num_labels,
-        dropout=mcfg.get("dropout", 0.1),
+        dropout=mcfg.dropout,
     ).to(device)
 
-    total_steps = len(train_loader) * tcfg.epochs // tcfg.get("accum_steps", 1)
-    warmup      = int(total_steps * tcfg.get("warmup_ratio", 0.06))
+    epochs = max(1, tcfg.max_steps // max(1, len(train_loader)))
 
     optimizer, scheduler = build_optimizer(
         model,
-        lr=tcfg.lr,
-        weight_decay=tcfg.get("weight_decay", 0.01),
-        warmup_steps=warmup,
-        total_steps=total_steps,
-        backbone_lr_multiplier=tcfg.get("backbone_lr_multiplier", 0.3),
+        lr=tcfg.peak_lr,
+        weight_decay=tcfg.weight_decay,
+        warmup_steps=tcfg.warmup_steps,
+        total_steps=tcfg.max_steps,
+        backbone_lr_multiplier=0.3,
     )
 
-    scaler  = torch.cuda.amp.GradScaler() if device.type == "cuda" else None
     tracker = CheckpointTracker(
         experiment_type=EXPERIMENT_TYPE,
         models_root=Path(cfg.paths.models),
         metric="macro_f1",
         mode="max",
-        patience=tcfg.get("patience", 3),
+        patience=tcfg.early_stopping_patience,
     )
 
     # ------------------------------------------------------------------
     # MLflow — explicit run_name ensures this experiment appears correctly
     # in the UI, not shadowed by the 01 module name.
     # ------------------------------------------------------------------
+    Path(cfg.mlflow.tracking_uri.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
     mlflow.set_experiment(cfg.project.name)
     with mlflow.start_run(run_name=EXPERIMENT_TYPE):
         mlflow.log_params({
             "base_model":   mcfg.base_model,
             "num_labels":   mcfg.num_labels,
-            "epochs":       tcfg.epochs,
+            "max_steps":    tcfg.max_steps,
             "batch_size":   tcfg.batch_size,
-            "lr":           tcfg.lr,
+            "lr":           tcfg.peak_lr,
             "seq_len":      cfg.tokenizer.seq_len,
             "experiment":   EXPERIMENT_TYPE,
         })
 
         with timer.step("training"):
-            for epoch in range(1, tcfg.epochs + 1):
+            epoch_bar = tqdm(range(1, epochs + 1), desc="epochs", unit="ep", dynamic_ncols=True)
+            for epoch in epoch_bar:
                 train_metrics = run_epoch(
                     model, train_loader, optimizer, scheduler, device,
-                    accum_steps=tcfg.get("accum_steps", 1),
-                    scaler=scaler,
+                    accum_steps=tcfg.grad_accum_steps,
                 )
                 val_metrics = evaluate(model, val_loader, device, num_labels=mcfg.num_labels)
 
+                epoch_bar.set_postfix(
+                    tr_loss=f"{train_metrics['loss']:.4f}",
+                    val_loss=f"{val_metrics['loss']:.4f}",
+                    f1=f"{val_metrics['macro_f1']:.4f}",
+                )
                 log.info(
-                    f"Epoch {epoch}/{tcfg.epochs} | "
+                    f"Epoch {epoch}/{epochs} | "
                     f"train_loss={train_metrics['loss']:.4f} | "
                     f"val_loss={val_metrics['loss']:.4f} | "
                     f"macro_f1={val_metrics['macro_f1']:.4f}"
                 )
 
                 mlflow.log_metrics(
-                    {f"train_{k}": v for k, v in train_metrics.items()} |
-                    {f"val_{k}":   v for k, v in val_metrics.items()},
+                    flatten_metrics(train_metrics, "train_") |
+                    flatten_metrics(val_metrics,   "val_"),
                     step=epoch,
                 )
 

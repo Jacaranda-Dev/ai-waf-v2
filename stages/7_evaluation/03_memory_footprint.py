@@ -1,4 +1,4 @@
-"""Stage 6.3 — Memory footprint: VRAM, RAM, and checkpoint sizes for all models."""
+"""Stage 7.3 — Memory footprint: VRAM, RAM, and checkpoint sizes for all models."""
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
@@ -64,9 +64,8 @@ def run(args):
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="03_memory_footprint"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="03_memory_footprint") as _run:
             metrics: dict[str, float] = {}
             for label, info in results.items():
                 if "disk_mb" in info:

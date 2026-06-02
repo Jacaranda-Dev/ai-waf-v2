@@ -23,32 +23,26 @@ Run:
 from __future__ import annotations
 
 import argparse
-import json
 import random
 from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
+from ai_waf_v2.tokenizer.http_tokenizer import (
+    HttpTokenizer,
+    CRLF_TOKEN,
+    LF_TOKEN,
+    CR_TOKEN,
+)
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 
-from tokenizer_eval import compute_full_metrics, stratified_sample
-
 log = get_logger(__name__)
 
-# Special tokens used in lieu of raw control characters.
-# These must also be registered in HttpTokenizer.SPECIAL_TOKENS so the
-# BPE model treats them as indivisible units.
-CRLF_TOKEN = "[CRLF]"
-LF_TOKEN   = "[LF]"
-CR_TOKEN   = "[CR]"
-
-CORPUS_SAMPLE_SIZE = 500_000
-EVAL_SAMPLE_SIZE   = 5_000
+CORPUS_SAMPLE_SIZE = 500_000  # fallback when not set in config
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +75,7 @@ def build_corpus(
     """
     Build a plain-text HTTP corpus for BPE training.
 
-    One Normalized request per line; CRLF boundaries are preserved as
+    One normalized request per line; CRLF boundaries are preserved as
     special tokens rather than collapsed into whitespace.
     """
     log.info("Building tokenizer training corpus...")
@@ -97,11 +91,19 @@ def build_corpus(
         texts = texts[:sample_n]
 
     corpus_path.parent.mkdir(parents=True, exist_ok=True)
+    n_replaced = 0
     with corpus_path.open("w", encoding="utf-8", errors="replace") as fh:
         for text in texts:
-            fh.write(_normalize_delimiters(text) + "\n")
+            normalized = _normalize_delimiters(text)
+            n_replaced += normalized.count("�")
+            fh.write(normalized + "\n")
 
     log.info(f"Corpus written: {len(texts):,} samples → {corpus_path}")
+    if n_replaced:
+        log.warning(
+            f"Corpus: {n_replaced:,} characters replaced with U+FFFD — "
+            "source data contains unencodable byte sequences"
+        )
     log.info(
         f"Delimiter tokens used: '{CRLF_TOKEN}', '{LF_TOKEN}', '{CR_TOKEN}' "
         "(structural boundaries preserved)"
@@ -137,8 +139,9 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Build corpus with delimiter preservation
     # ------------------------------------------------------------------
+    sample_n = getattr(tok_cfg, "corpus_sample_size", CORPUS_SAMPLE_SIZE)
     with timer.step("build_corpus"):
-        build_corpus(splits_dir, corpus_path, seed=cfg.project.seed)
+        build_corpus(splits_dir, corpus_path, sample_n=sample_n, seed=cfg.project.seed)
 
     # ------------------------------------------------------------------
     # Train BPE tokenizer
@@ -152,56 +155,7 @@ def run(args: argparse.Namespace) -> None:
             seq_len=cfg.tokenizer.seq_len,
         )
     log.info(f"Track B tokenizer trained — vocab_size={tokenizer_b.vocab_size}")
-
-    # ------------------------------------------------------------------
-    # Stratified evaluation on val split
-    # ------------------------------------------------------------------
-    val_table  = pq.read_table(splits_dir / "val.parquet", columns=["raw", "attack_class"])
-    all_texts  = val_table["raw"].to_pylist()
-    all_labels = val_table["attack_class"].to_pylist()
-
-    texts, labels = stratified_sample(
-        all_texts, all_labels,
-        n=min(EVAL_SAMPLE_SIZE, len(all_texts)),
-        seed=cfg.project.seed,
-    )
-    log.info(
-        f"Stratified sample: {len(texts)} requests across "
-        f"{len(set(labels))} attack classes"
-    )
-
-    # ------------------------------------------------------------------
-    # Full unified metrics
-    # ------------------------------------------------------------------
-    seq_len  = cfg.tokenizer.seq_len
-    with timer.step("compute_metrics"):
-        result_b = compute_full_metrics(
-            tokenizer_b, texts, labels,
-            seq_len=seq_len,
-            unk_token="[UNK]",
-            track_name="track_b",
-        )
-
-    log.info(
-        f"Track B | oov={result_b['oov_rate']:.4f}  "
-        f"fertility={result_b['fertility']:.4f}  "
-        f"truncation={result_b['truncation_rate']:.4f}  "
-        f"subword_char_ratio={result_b['subword_char_ratio']:.2f}"
-    )
-    for cls, m in result_b["per_class"].items():
-        log.info(
-            f"  {cls:<22s} oov={m['oov_rate']:.4f}  "
-            f"fertility={m['fertility']:.4f}  "
-            f"trunc={m['truncation_rate']:.4f}  n={m['n_samples']}"
-        )
-
-    # ------------------------------------------------------------------
-    # Persist — full comparison deferred to 05_compare_tokenizers.py
-    # ------------------------------------------------------------------
-    result_b["timings_s"] = timer.timings
-    out_path = reports_dir / "tokenizer_stats_track_b.json"
-    out_path.write_text(json.dumps(result_b, indent=2))
-    log.info(f"Track B stats saved to {out_path}")
+    log.info("Evaluation deferred to 04_measure_oov_track_b.py")
 
     try:
         import mlflow
@@ -209,21 +163,14 @@ def run(args: argparse.Namespace) -> None:
         init_experiment(cfg)
         with mlflow.start_run(run_name="03_train_custom_bpe"):
             mlflow.log_params({
-                "vocab_size":        tok_cfg.vocab_size,
-                "corpus_sample_size": CORPUS_SAMPLE_SIZE,
-                "eval_sample_size":  EVAL_SAMPLE_SIZE,
-                "seq_len":           cfg.tokenizer.seq_len,
-                "output_dir":        tok_cfg.output_dir,
+                "vocab_size":         tok_cfg.vocab_size,
+                "corpus_sample_size": sample_n,
+                "seq_len":            cfg.tokenizer.seq_len,
+                "output_dir":         tok_cfg.output_dir,
             })
             log_metrics_dict({
-                "oov_rate":           float(result_b["oov_rate"]),
-                "fertility":          float(result_b["fertility"]),
-                "truncation_rate":    float(result_b["truncation_rate"]),
-                "avg_seq_len":        float(result_b["avg_seq_len"]),
-                "subword_char_ratio": float(result_b["subword_char_ratio"]),
-                "actual_vocab_size":  float(tokenizer_b.vocab_size),
+                "actual_vocab_size": float(tokenizer_b.vocab_size),
             })
-            mlflow.log_artifact(str(out_path))
             timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)

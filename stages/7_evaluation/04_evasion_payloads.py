@@ -1,7 +1,7 @@
 """
 stages/7_evaluation/04_evasion_payloads.py
 ------------------------------------
-Stage 6.4 — Adversarial robustness evaluation.
+Stage 7.4 — Adversarial robustness evaluation.
 
 Tests the trained models against:
   - All tamper scripts in TAMPER_REGISTRY
@@ -130,9 +130,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="04_evasion_payloads"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="04_evasion_payloads") as _run:
             mlflow.log_params({
                 "n_models":         len(all_reports),
                 "n_malicious_cap":  2000,

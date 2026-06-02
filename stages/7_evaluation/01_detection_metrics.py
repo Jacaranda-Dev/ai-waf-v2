@@ -106,8 +106,7 @@ def _load_model_and_predict(
                 # Extract CLS embedding (position 0 of encoder output)
                 # Works for WafClassifier; gracefully skips if attribute absent
                 if hasattr(model, "encoder"):
-                    enc_out = model.encoder(ids, mask)   # (B, T, D)
-                    cls_emb = enc_out[:, 0, :].float()   # (B, D)
+                    cls_emb = model.encoder(ids, mask).float()   # (B, D)
                     all_cls_embs.append(cls_emb.cpu())
 
             all_preds.append(preds.cpu())
@@ -291,7 +290,6 @@ def run(args: argparse.Namespace) -> None:
         pad_token_id=tokenizer.pad_token_id,
         max_seq_len=cfg.tokenizer.seq_len,
         include_attack_class=True,
-        include_raw=True,       # needed for FP entropy categorisation
     )
 
     test_loader = DataLoader(
@@ -363,9 +361,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="01_detection_metrics"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="01_detection_metrics") as _run:
             mlflow.log_params({
                 "high_entropy_threshold": HIGH_ENTROPY_THRESHOLD,
                 "fp_cluster_k":           FP_CLUSTER_K,

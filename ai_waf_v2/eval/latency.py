@@ -129,7 +129,10 @@ class LatencyBenchmark:
             mean = lat.mean().item()
             throughput = bs / (mean / 1000.0)  # requests/sec
 
-            n_params = sum(p.numel() for p in self.model.parameters())
+            n_params = (
+                sum(p.numel() for p in self.model.parameters())
+                if self.model is not None else 0
+            )
 
             result = {
                 "batch_size":     bs,
@@ -220,13 +223,24 @@ class OnnxLatencyBenchmark(LatencyBenchmark):
             if device == "cuda"
             else ["CPUExecutionProvider"]
         )
-        self.session   = ort.InferenceSession(str(onnx_path), providers=providers)
-        self.device    = torch.device(device)
-        self.seq_len   = seq_len
+        self.session    = ort.InferenceSession(str(onnx_path), providers=providers)
+        # Verify the requested provider is actually active; ORT silently falls
+        # back to CPU when e.g. onnxruntime-gpu is not installed, which would
+        # cause the benchmark to hang running a Transformer on CPU.
+        if device == "cuda":
+            active = self.session.get_providers()
+            if "CUDAExecutionProvider" not in active:
+                raise RuntimeError(
+                    "CUDAExecutionProvider not available — install onnxruntime-gpu. "
+                    f"Active providers: {active}"
+                )
+        self.model      = None   # no nn.Module for ORT sessions
+        self.device     = torch.device(device)
+        self.seq_len    = seq_len
         self.vocab_size = vocab_size
-        self.n_warmup  = n_warmup
-        self.n_runs    = n_runs
-        self.use_bf16  = False  # ORT handles precision internally
+        self.n_warmup   = n_warmup
+        self.n_runs     = n_runs
+        self.use_bf16   = False  # ORT handles precision internally
 
     def _make_batch(self, batch_size: int) -> dict[str, torch.Tensor]:
         # Return CPU tensors (ORT expects numpy-compatible)

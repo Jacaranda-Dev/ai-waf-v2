@@ -1,4 +1,4 @@
-"""Stage 7.3 — Error analysis: characterise FP and FN samples."""
+"""Stage 7.13 — Error analysis: characterise FP and FN samples."""
 
 from __future__ import annotations
 import argparse, json
@@ -75,9 +75,8 @@ def run(args):
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="13_error_analysis"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="13_error_analysis") as _run:
             mlflow.log_params({
                 "n_test_samples": len(all_labels),
             })

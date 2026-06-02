@@ -43,8 +43,12 @@ Run:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import math
 from pathlib import Path
 from typing import Any
+
+import warnings
 
 import mlflow
 import pyarrow.parquet as pq
@@ -54,6 +58,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer
 
+# DeBERTa teacher uses F.scaled_dot_product_attention which emits this under no_grad()
+# Non-determinism is irrelevant since the teacher is frozen and produces no gradients.
+warnings.filterwarnings("ignore", message="Memory Efficient attention defaults")
+
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
@@ -62,10 +70,8 @@ from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 
 from checkpoint_utils import CheckpointTracker, load_checkpoint, resolve_checkpoint
-from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate
-
-# Import the student and teacher model classes
-from _03_track_b_99m  import TrackB99MModel   # noqa: F401  (student)
+from track_b_model import TrackB99MModel
+from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, flatten_metrics
 
 log = get_logger(__name__)
 
@@ -108,7 +114,7 @@ class DistillDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         text = self.texts[idx]
 
-        student_ids = self.s_tok.encode(text)[: self.seq_len]
+        student_ids = self.s_tok.encode(text).ids[: self.seq_len]
         teacher_ids = self.t_tok.encode(
             text, truncation=True, max_length=self.seq_len, add_special_tokens=True
         )
@@ -243,14 +249,21 @@ def run_distill_epoch(
     temperature: float,
     alpha:       float,
     accum_steps: int = 1,
-    scaler:      Any = None,
+    scaler:      Any = None,   # unused; kept for call-site compat
 ) -> dict[str, float]:
+
+    autocast_ctx = (
+        torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        if device.type == "cuda"
+        else contextlib.nullcontext()
+    )
 
     student.train()
     teacher.eval()
 
     total_loss = total_ce = total_kl = 0.0
-    T   = temperature
+    nan_streak = 0
+    T = temperature
 
     optimizer.zero_grad()
     for i, batch in enumerate(loader):
@@ -260,38 +273,42 @@ def run_distill_epoch(
         t_mask = batch["teacher_attention_mask"].to(device)
         labels = batch["labels"].to(device)
 
-        use_amp = scaler is not None
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with autocast_ctx:
             student_logits = student(input_ids=s_ids, attention_mask=s_mask)
-            teacher_logits = teacher(input_ids=t_ids, attention_mask=t_mask)   # no_grad inside teacher
+            teacher_logits = teacher(input_ids=t_ids, attention_mask=t_mask)
 
             ce_loss = F.cross_entropy(student_logits, labels)
             kl_loss = F.kl_div(
                 F.log_softmax(student_logits / T, dim=-1),
-                F.softmax(teacher_logits  / T, dim=-1),
+                F.softmax(teacher_logits.float() / T, dim=-1),
                 reduction="batchmean",
             )
             loss = (alpha * ce_loss + (1.0 - alpha) * T ** 2 * kl_loss) / accum_steps
 
-        if use_amp:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
+        loss_val = loss.item()
+        if not math.isfinite(loss_val):
+            nan_streak += 1
+            if nan_streak >= 20:
+                raise RuntimeError(
+                    f"Distillation diverged: 20 consecutive non-finite losses. "
+                    "Check LR, temperature, and data quality."
+                )
+            optimizer.zero_grad()
+            continue
+
+        nan_streak = 0
+        loss.backward()
 
         if (i + 1) % accum_steps == 0:
-            if use_amp:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
-                scaler.step(optimizer)
-                scaler.update()
+            grad_norm = torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+            if not math.isfinite(grad_norm.item()):
+                optimizer.zero_grad()
             else:
-                torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
                 optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-            scheduler.step()
-            optimizer.zero_grad()
-
-        total_loss += loss.item() * accum_steps
+        total_loss += loss_val * accum_steps
         total_ce   += ce_loss.item()
         total_kl   += kl_loss.item()
 
@@ -313,25 +330,22 @@ def run(args: argparse.Namespace) -> None:
     seed_everything(cfg.project.seed)
 
     require_inputs({
-        f"{cfg.model.track_a_large.output_dir}/checkpoint_meta.json": "run 01_track_a_large.py",
-        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json":         "run 03_train_custom_bpe.py",
+        f"{cfg.model.track_a_large.output_dir}/latest/checkpoint_meta.json": "run 01_track_a_large.py",
+        f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json":                "run 03_train_custom_bpe.py",
         "data/splits/train.parquet": "make data_augment_all",
         "data/splits/val.parquet":   "make data_augment_all",
     })
-    if check_output(
-        Path(cfg.model.track_b_99m.output_dir) / "checkpoint_meta.json",
-        args.force, "Stage 5.3b Track B distillation"
-    ):
-        return
+    # No check_output here: 03b shares output_dir with 03 and intentionally
+    # overwrites the latest symlink. Use --force on 03 to re-run supervised
+    # training; re-running 03b is always safe.
 
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     mcfg    = cfg.model.track_b_99m
-    tcfg    = cfg.training
-    dcfg    = cfg.training.distillation
+    tcfg    = cfg.training.distillation
     timer   = StepTimer()
 
-    temperature = dcfg.get("temperature", 4.0)
-    alpha       = dcfg.get("alpha",       0.5)
+    temperature = tcfg.temperature
+    alpha       = tcfg.alpha_hard
 
     log.info(
         f"Distillation | T={temperature} | α={alpha} | device={device}"
@@ -359,11 +373,11 @@ def run(args: argparse.Namespace) -> None:
         )
         return DataLoader(
             ds,
-            batch_size=tcfg.batch_size,
+            batch_size=tcfg.batch_size,  # distillation batch_size
             shuffle=shuffle,
             collate_fn=lambda b: distill_collate_fn(
                 b,
-                student_pad=student_tok.pad_id,
+                student_pad=student_tok.pad_token_id,
                 teacher_pad=teacher_tok.pad_token_id,
                 seq_len=seq_len,
             ),
@@ -393,13 +407,13 @@ def run(args: argparse.Namespace) -> None:
     # to benefit from the warm start).
     # ------------------------------------------------------------------
     encoder_cfg = {
-        "hidden_size":             mcfg.get("hidden_size", 768),
-        "num_layers":              mcfg.get("num_layers", 6),
-        "num_heads":               mcfg.get("num_heads", 12),
-        "intermediate_size":       mcfg.get("intermediate_size", 3072),
+        "hidden_size":             mcfg.d_model,
+        "num_layers":              mcfg.n_layers,
+        "num_heads":               mcfg.n_heads,
+        "intermediate_size":       mcfg.d_ff,
         "max_position_embeddings": seq_len,
-        "dropout":                 mcfg.get("dropout", 0.1),
-        "pad_token_id":            student_tok.pad_id,
+        "dropout":                 mcfg.dropout,
+        "pad_token_id":            student_tok.pad_token_id,
     }
     student = TrackB99MModel(
         vocab_size=student_tok.vocab_size,
@@ -421,40 +435,42 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Optimizer
     # ------------------------------------------------------------------
-    total_steps = len(train_loader) * tcfg.epochs // tcfg.get("accum_steps", 1)
-    warmup      = int(total_steps * tcfg.get("warmup_ratio", 0.06))
+    epochs      = max(1, tcfg.max_steps // max(1, len(train_loader)))
+    warmup      = int(tcfg.max_steps * tcfg.warmup_ratio)
 
     optimizer, scheduler = build_optimizer(
         student,
-        lr=dcfg.get("lr", tcfg.lr),
-        weight_decay=tcfg.get("weight_decay", 0.01),
+        lr=tcfg.peak_lr,
+        weight_decay=tcfg.weight_decay,
         warmup_steps=warmup,
-        total_steps=total_steps,
+        total_steps=tcfg.max_steps,
         backbone_lr_multiplier=1.0,
     )
 
-    scaler  = torch.cuda.amp.GradScaler() if device.type == "cuda" else None
     tracker = CheckpointTracker(
         experiment_type=EXPERIMENT_TYPE,
         models_root=Path(cfg.paths.models),
         metric="macro_f1",
         mode="max",
-        patience=tcfg.get("patience", 5),
+        patience=5,
     )
 
     # ------------------------------------------------------------------
     # MLflow
     # ------------------------------------------------------------------
+    Path(cfg.mlflow.tracking_uri.replace("sqlite:///", "")).parent.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
     mlflow.set_experiment(cfg.project.name)
     with mlflow.start_run(run_name=f"{EXPERIMENT_TYPE}_distilled"):
         mlflow.log_params({
             "teacher":          cfg.model.track_a_large.base_model,
             "student":          EXPERIMENT_TYPE,
             "temperature":      temperature,
-            "alpha":            alpha,
-            "epochs":           tcfg.epochs,
+            "alpha_hard":       alpha,
+            "alpha_soft":       tcfg.alpha_soft,
+            "max_steps":        tcfg.max_steps,
             "batch_size":       tcfg.batch_size,
-            "lr":               dcfg.get("lr", tcfg.lr),
+            "lr":               tcfg.peak_lr,
             "seq_len":          seq_len,
         })
 
@@ -470,7 +486,7 @@ def run(args: argparse.Namespace) -> None:
                     self.labels = t["label"].to_pylist()
                 def __len__(self): return len(self.texts)
                 def __getitem__(self, i):
-                    ids = student_tok.encode(self.texts[i])[:seq_len]
+                    ids = student_tok.encode(self.texts[i]).ids[:seq_len]
                     return {"input_ids": ids, "label": self.labels[i]}
 
             coll = WafCollator(student_tok, seq_len=seq_len)
@@ -480,26 +496,25 @@ def run(args: argparse.Namespace) -> None:
         eval_loader = _make_student_only_loader()
 
         with timer.step("distillation"):
-            for epoch in range(1, tcfg.epochs + 1):
+            for epoch in range(1, epochs + 1):
                 train_m = run_distill_epoch(
                     student, teacher, train_loader,
                     optimizer, scheduler, device,
                     temperature=temperature, alpha=alpha,
-                    accum_steps=tcfg.get("accum_steps", 1),
-                    scaler=scaler,
+                    accum_steps=tcfg.grad_accum_steps,
                 )
                 val_m = evaluate(student, eval_loader, device, num_labels=mcfg.num_labels)
 
                 log.info(
-                    f"Epoch {epoch}/{tcfg.epochs} | "
+                    f"Epoch {epoch}/{epochs} | "
                     f"loss={train_m['loss']:.4f}  ce={train_m['ce_loss']:.4f}  "
                     f"kl={train_m['kl_loss']:.4f} | "
                     f"val_macro_f1={val_m['macro_f1']:.4f}"
                 )
 
                 mlflow.log_metrics(
-                    {f"train_{k}": v for k, v in train_m.items()} |
-                    {f"val_{k}":   v for k, v in val_m.items()},
+                    flatten_metrics(train_m, "train_") |
+                    flatten_metrics(val_m,   "val_"),
                     step=epoch,
                 )
 

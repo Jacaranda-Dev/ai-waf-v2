@@ -1,0 +1,4065 @@
+{
+  "report_metadata": {
+    "generated_at": "2026-06-02T16:25:37.330957+00:00",
+    "config": "config/pipeline.yaml",
+    "sections_found": [
+      "detection_efficacy",
+      "latency_throughput",
+      "memory_footprint",
+      "adversarial_robustness",
+      "obfuscation_robustness",
+      "novel_attack_generalization",
+      "tokenizer_ablation",
+      "augmentation_ablation",
+      "model_size_scaling",
+      "label_smoothing_ablation",
+      "attention_visualization",
+      "shap_analysis",
+      "error_analysis",
+      "master_comparison_table"
+    ],
+    "sections_missing": [
+      "deployment_recommendation"
+    ]
+  },
+  "summary": {
+    "track_b_99m": {
+      "f1": 0.995608,
+      "auc_pr": 0.999964,
+      "fpr": 0.057325,
+      "recall": 1.0
+    },
+    "student": {
+      "f1": 0.99609,
+      "auc_pr": 0.999956,
+      "fpr": 0.044586,
+      "recall": 0.99902,
+      "p99_ms": 1.313,
+      "p99_9_ms": 1.339,
+      "jitter_ms": 0.014,
+      "rps": 787.6,
+      "latency_device": "cuda",
+      "mean_evasion_rate": 0.001,
+      "slo": {
+        "p99_ok": true,
+        "p99_9_ok": true,
+        "rps_ok": false
+      }
+    },
+    "modsecurity_crs_pl1": {
+      "f1": 0.012464,
+      "auc_pr": 0.682796,
+      "fpr": 0.00073,
+      "recall": 0.006274
+    },
+    "modsecurity_crs_pl2": {
+      "f1": 0.042463,
+      "auc_pr": 0.695709,
+      "fpr": 0.00073,
+      "recall": 0.021703
+    },
+    "modsecurity_crs_pl3": {
+      "f1": 0.568653,
+      "auc_pr": 0.725332,
+      "fpr": 0.193982,
+      "recall": 0.451553
+    },
+    "modsecurity_crs_pl4": {
+      "f1": 0.582077,
+      "auc_pr": 0.734417,
+      "fpr": 0.194274,
+      "recall": 0.466674
+    },
+    "aho_corasick_fast_match": {
+      "f1": 0.585994,
+      "auc_pr": 0.683803,
+      "fpr": 0.249197,
+      "recall": 0.487143
+    },
+    "xgboost_hashed_ngram_http": {
+      "f1": 0.99136,
+      "auc_pr": 0.999635,
+      "fpr": 0.003798,
+      "recall": 0.985497
+    },
+    "xgboost_hashed_ngram_ablation": {
+      "f1": 0.991566,
+      "auc_pr": 0.99962,
+      "fpr": 0.00336,
+      "recall": 0.9856
+    }
+  },
+  "tail_latency_digest": {
+    "pcie_overhead_ms": {
+      "1": 0.009,
+      "8": 0.011,
+      "32": 0.011,
+      "64": 0.012,
+      "256": 0.02
+    },
+    "teacher_99m_cuda": {
+      "p99_ms": 3.166,
+      "p99_9_ms": 3.71,
+      "jitter_ms": 0.233
+    },
+    "student_cuda": {
+      "p99_ms": 1.313,
+      "p99_9_ms": 1.339,
+      "jitter_ms": 0.014
+    }
+  },
+  "novel_attack_ci_summary": {
+    "graphql_injection": {
+      "detection_rate": 1.0,
+      "ci_95": [
+        0.99058,
+        1.0
+      ],
+      "n_unique": 404
+    },
+    "jwt_manipulation": {
+      "detection_rate": 0.522,
+      "ci_95": [
+        0.47821,
+        0.56545
+      ],
+      "n_unique": 500
+    },
+    "http2_desync": {
+      "detection_rate": 1.0,
+      "ci_95": [
+        0.9826,
+        1.0
+      ],
+      "n_unique": 217
+    },
+    "prototype_pollution": {
+      "detection_rate": 1.0,
+      "ci_95": [
+        0.98905,
+        1.0
+      ],
+      "n_unique": 347
+    },
+    "ssrf_injection": {
+      "detection_rate": 1.0,
+      "ci_95": [
+        0.99227,
+        1.0
+      ],
+      "n_unique": 493
+    },
+    "xxe_injection": {
+      "detection_rate": 1.0,
+      "ci_95": [
+        0.99238,
+        1.0
+      ],
+      "n_unique": 500
+    },
+    "timings_s": {
+      "detection_rate": null,
+      "ci_95": [
+        null,
+        null
+      ],
+      "n_unique": null
+    }
+  },
+  "fp_diagnostic_summary": {},
+  "tokenizer_anchor_correction": {
+    "status": "anchor training failed \u2014 scaling not available",
+    "corrected_estimates": null
+  },
+  "detection_efficacy": {
+    "track_b_99m": {
+      "overall": {
+        "f1": 0.995608,
+        "precision": 0.991254,
+        "recall": 1.0,
+        "fpr": 0.057325,
+        "fnr": 0.0,
+        "accuracy": 0.992353,
+        "auc_roc": 0.999763,
+        "auc_pr": 0.999964,
+        "avg_precision": 0.999964,
+        "tp": 1020,
+        "fp": 9,
+        "tn": 148,
+        "fn": 0
+      },
+      "per_class": {
+        "xss": {
+          "f1": 0.971061,
+          "precision": 0.94375,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.970779,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 151,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "header_injection": {
+          "f1": 0.949153,
+          "precision": 0.903226,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.962656,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 84,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "ssrf": {
+          "f1": 0.968858,
+          "precision": 0.939597,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.969697,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 140,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "ssti": {
+          "f1": 0.959276,
+          "precision": 0.921739,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.965779,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 106,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "path_traversal": {
+          "f1": 0.944785,
+          "precision": 0.895349,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.961538,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 77,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "cmdi": {
+          "f1": 0.969492,
+          "precision": 0.940789,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.97,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 143,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "lfi": {
+          "f1": 0.95814,
+          "precision": 0.919643,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.965385,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 103,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.942675,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "unknown": {
+          "f1": 0.963855,
+          "precision": 0.930233,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.967509,
+          "auc_roc": 0.998089,
+          "auc_pr": 0.997546,
+          "avg_precision": 0.997556,
+          "tp": 120,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "xxe": {
+          "f1": 0.942675,
+          "precision": 0.891566,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.961039,
+          "auc_roc": 0.999828,
+          "auc_pr": 0.999642,
+          "avg_precision": 0.999644,
+          "tp": 74,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        },
+        "benign_edge_case": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.041494,
+          "fnr": 0.0,
+          "accuracy": 0.958506,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 10,
+          "tn": 231,
+          "fn": 0
+        },
+        "sqli": {
+          "f1": 0.830189,
+          "precision": 0.709677,
+          "recall": 1.0,
+          "fpr": 0.057325,
+          "fnr": 0.0,
+          "accuracy": 0.949721,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 22,
+          "fp": 9,
+          "tn": 148,
+          "fn": 0
+        }
+      }
+    },
+    "student": {
+      "overall": {
+        "f1": 0.99609,
+        "precision": 0.993177,
+        "recall": 0.99902,
+        "fpr": 0.044586,
+        "fnr": 0.00098,
+        "accuracy": 0.993203,
+        "auc_roc": 0.999713,
+        "auc_pr": 0.999956,
+        "avg_precision": 0.999956,
+        "tp": 1019,
+        "fp": 7,
+        "tn": 150,
+        "fn": 1
+      },
+      "per_class": {
+        "xss": {
+          "f1": 0.977346,
+          "precision": 0.955696,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.977273,
+          "auc_roc": 0.999958,
+          "auc_pr": 0.999956,
+          "avg_precision": 0.999956,
+          "tp": 151,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "header_injection": {
+          "f1": 0.96,
+          "precision": 0.923077,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.970954,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 84,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "ssrf": {
+          "f1": 0.97561,
+          "precision": 0.952381,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.976431,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 140,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "ssti": {
+          "f1": 0.968037,
+          "precision": 0.938053,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.973384,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 106,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "path_traversal": {
+          "f1": 0.956522,
+          "precision": 0.916667,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.970085,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 77,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "cmdi": {
+          "f1": 0.976109,
+          "precision": 0.953333,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.976667,
+          "auc_roc": 0.999955,
+          "auc_pr": 0.999951,
+          "avg_precision": 0.999951,
+          "tp": 143,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "lfi": {
+          "f1": 0.967136,
+          "precision": 0.936364,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.973077,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 103,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.955414,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "unknown": {
+          "f1": 0.96748,
+          "precision": 0.944444,
+          "recall": 0.991667,
+          "fpr": 0.044586,
+          "fnr": 0.008333,
+          "accuracy": 0.971119,
+          "auc_roc": 0.997665,
+          "auc_pr": 0.996958,
+          "avg_precision": 0.99697,
+          "tp": 119,
+          "fp": 7,
+          "tn": 150,
+          "fn": 1
+        },
+        "xxe": {
+          "f1": 0.954839,
+          "precision": 0.91358,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.969697,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 74,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        },
+        "benign_edge_case": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.033195,
+          "fnr": 0.0,
+          "accuracy": 0.966805,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 8,
+          "tn": 233,
+          "fn": 0
+        },
+        "sqli": {
+          "f1": 0.862745,
+          "precision": 0.758621,
+          "recall": 1.0,
+          "fpr": 0.044586,
+          "fnr": 0.0,
+          "accuracy": 0.960894,
+          "auc_roc": 1.0,
+          "auc_pr": 1.0,
+          "avg_precision": 1.0,
+          "tp": 22,
+          "fp": 7,
+          "tn": 150,
+          "fn": 0
+        }
+      }
+    },
+    "modsecurity_crs_pl1": {
+      "model": "modsecurity_crs_pl1",
+      "paranoia_level": 1,
+      "anomaly_threshold": 5,
+      "n_active_rules": 8,
+      "overall": {
+        "f1": 0.012464,
+        "precision": 0.924242,
+        "recall": 0.006274,
+        "fpr": 0.00073,
+        "fnr": 0.993726,
+        "accuracy": 0.416586,
+        "auc_roc": 0.60289,
+        "auc_pr": 0.682796,
+        "avg_precision": 0.682882,
+        "tp": 61,
+        "fp": 5,
+        "tn": 6841,
+        "fn": 9661
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 0.0,
+          "accuracy": 0.99927,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.013868,
+          "precision": 0.880952,
+          "recall": 0.006989,
+          "fpr": 0.00073,
+          "fnr": 0.993011,
+          "accuracy": 0.566557,
+          "auc_roc": 0.845239,
+          "auc_pr": 0.697061,
+          "avg_precision": 0.697273,
+          "tp": 37,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 5257
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.965834,
+          "auc_roc": 0.597038,
+          "auc_pr": 0.040468,
+          "avg_precision": 0.040635,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 237
+        },
+        "manipulation": {
+          "f1": 0.027569,
+          "precision": 0.6875,
+          "recall": 0.014066,
+          "fpr": 0.00073,
+          "fnr": 0.985934,
+          "accuracy": 0.89827,
+          "auc_roc": 0.731055,
+          "auc_pr": 0.167976,
+          "avg_precision": 0.168701,
+          "tp": 11,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 771
+        },
+        "fake the source of data": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.790867,
+          "auc_roc": 0.754922,
+          "auc_pr": 0.347235,
+          "avg_precision": 0.347728,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 1804
+        },
+        "unknown": {
+          "f1": 0.026915,
+          "precision": 0.722222,
+          "recall": 0.013713,
+          "fpr": 0.00073,
+          "fnr": 0.986287,
+          "accuracy": 0.879394,
+          "auc_roc": 0.636843,
+          "auc_pr": 0.158301,
+          "avg_precision": 0.158883,
+          "tp": 13,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 935
+        },
+        "http abusion": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.911769,
+          "auc_roc": 0.72571,
+          "auc_pr": 0.139156,
+          "avg_precision": 0.139402,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 657
+        }
+      },
+      "throughput": {
+        "batch_size": 1,
+        "mean_rps": 17902.0,
+        "device": "cpu",
+        "p99_ms": 0.056,
+        "throughput_rps": 17902.2
+      },
+      "elapsed_s": 0.925,
+      "slo_verdicts": {
+        "fpr": "PASS",
+        "latency_p99": "PASS",
+        "throughput": "PASS"
+      }
+    },
+    "modsecurity_crs_pl2": {
+      "model": "modsecurity_crs_pl2",
+      "paranoia_level": 2,
+      "anomaly_threshold": 5,
+      "n_active_rules": 12,
+      "overall": {
+        "f1": 0.042463,
+        "precision": 0.976852,
+        "recall": 0.021703,
+        "fpr": 0.00073,
+        "fnr": 0.978297,
+        "accuracy": 0.42564,
+        "auc_roc": 0.610974,
+        "auc_pr": 0.695709,
+        "avg_precision": 0.695779,
+        "tp": 211,
+        "fp": 5,
+        "tn": 6841,
+        "fn": 9511
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 0.0,
+          "accuracy": 0.99927,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.068174,
+          "precision": 0.973958,
+          "recall": 0.035323,
+          "fpr": 0.00073,
+          "fnr": 0.964677,
+          "accuracy": 0.578913,
+          "auc_roc": 0.848756,
+          "auc_pr": 0.719688,
+          "avg_precision": 0.719819,
+          "tp": 187,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 5107
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.965834,
+          "auc_roc": 0.597038,
+          "auc_pr": 0.040468,
+          "avg_precision": 0.040635,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 237
+        },
+        "manipulation": {
+          "f1": 0.027569,
+          "precision": 0.6875,
+          "recall": 0.014066,
+          "fpr": 0.00073,
+          "fnr": 0.985934,
+          "accuracy": 0.89827,
+          "auc_roc": 0.731055,
+          "auc_pr": 0.167916,
+          "avg_precision": 0.168642,
+          "tp": 11,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 771
+        },
+        "fake the source of data": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.790867,
+          "auc_roc": 0.754922,
+          "auc_pr": 0.347235,
+          "avg_precision": 0.347728,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 1804
+        },
+        "unknown": {
+          "f1": 0.026915,
+          "precision": 0.722222,
+          "recall": 0.013713,
+          "fpr": 0.00073,
+          "fnr": 0.986287,
+          "accuracy": 0.879394,
+          "auc_roc": 0.636842,
+          "auc_pr": 0.15772,
+          "avg_precision": 0.158268,
+          "tp": 13,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 935
+        },
+        "http abusion": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00073,
+          "fnr": 1.0,
+          "accuracy": 0.911769,
+          "auc_roc": 0.72571,
+          "auc_pr": 0.139156,
+          "avg_precision": 0.139402,
+          "tp": 0,
+          "fp": 5,
+          "tn": 6841,
+          "fn": 657
+        }
+      },
+      "throughput": {
+        "batch_size": 1,
+        "mean_rps": 12335.0,
+        "device": "cpu",
+        "p99_ms": 0.081,
+        "throughput_rps": 12334.9
+      },
+      "elapsed_s": 1.343,
+      "slo_verdicts": {
+        "fpr": "PASS",
+        "latency_p99": "PASS",
+        "throughput": "PASS"
+      }
+    },
+    "modsecurity_crs_pl3": {
+      "model": "modsecurity_crs_pl3",
+      "paranoia_level": 3,
+      "anomaly_threshold": 5,
+      "n_active_rules": 16,
+      "overall": {
+        "f1": 0.568653,
+        "precision": 0.767751,
+        "recall": 0.451553,
+        "fpr": 0.193982,
+        "fnr": 0.548447,
+        "accuracy": 0.59802,
+        "auc_roc": 0.677229,
+        "auc_pr": 0.725332,
+        "avg_precision": 0.725422,
+        "tp": 4390,
+        "fp": 1328,
+        "tn": 5518,
+        "fn": 5332
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.193982,
+          "fnr": 0.0,
+          "accuracy": 0.806018,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.582165,
+          "precision": 0.671856,
+          "recall": 0.5136,
+          "fpr": 0.193982,
+          "fnr": 0.4864,
+          "accuracy": 0.678501,
+          "auc_roc": 0.852323,
+          "auc_pr": 0.72709,
+          "avg_precision": 0.727192,
+          "tp": 2719,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 2575
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.263041,
+          "precision": 0.151438,
+          "recall": 1.0,
+          "fpr": 0.193982,
+          "fnr": 0.0,
+          "accuracy": 0.812509,
+          "auc_roc": 0.806043,
+          "auc_pr": 0.079862,
+          "avg_precision": 0.080181,
+          "tp": 237,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 0
+        },
+        "manipulation": {
+          "f1": 0.256919,
+          "precision": 0.18975,
+          "recall": 0.397698,
+          "fpr": 0.193982,
+          "fnr": 0.602302,
+          "accuracy": 0.764158,
+          "auc_roc": 0.738272,
+          "auc_pr": 0.16834,
+          "avg_precision": 0.169033,
+          "tp": 311,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 471
+        },
+        "fake the source of data": {
+          "f1": 0.394258,
+          "precision": 0.366714,
+          "recall": 0.426275,
+          "fpr": 0.193982,
+          "fnr": 0.573725,
+          "accuracy": 0.726821,
+          "auc_roc": 0.762145,
+          "auc_pr": 0.361231,
+          "avg_precision": 0.361706,
+          "tp": 769,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 1035
+        },
+        "unknown": {
+          "f1": 0.011359,
+          "precision": 0.009694,
+          "recall": 0.013713,
+          "fpr": 0.193982,
+          "fnr": 0.986287,
+          "accuracy": 0.709648,
+          "auc_roc": 0.387429,
+          "auc_pr": 0.095388,
+          "avg_precision": 0.095837,
+          "tp": 13,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 935
+        },
+        "http abusion": {
+          "f1": 0.293207,
+          "precision": 0.204314,
+          "recall": 0.519026,
+          "fpr": 0.193982,
+          "fnr": 0.480974,
+          "accuracy": 0.780888,
+          "auc_roc": 0.723026,
+          "auc_pr": 0.142026,
+          "avg_precision": 0.142277,
+          "tp": 341,
+          "fp": 1328,
+          "tn": 5518,
+          "fn": 316
+        }
+      },
+      "throughput": {
+        "batch_size": 1,
+        "mean_rps": 8068.0,
+        "device": "cpu",
+        "p99_ms": 0.124,
+        "throughput_rps": 8068.0
+      },
+      "elapsed_s": 2.054,
+      "slo_verdicts": {
+        "fpr": "FAIL",
+        "latency_p99": "PASS",
+        "throughput": "FAIL"
+      }
+    },
+    "modsecurity_crs_pl4": {
+      "model": "modsecurity_crs_pl4",
+      "paranoia_level": 4,
+      "anomaly_threshold": 5,
+      "n_active_rules": 19,
+      "overall": {
+        "f1": 0.582077,
+        "precision": 0.773308,
+        "recall": 0.466674,
+        "fpr": 0.194274,
+        "fnr": 0.533326,
+        "accuracy": 0.606772,
+        "auc_roc": 0.683544,
+        "auc_pr": 0.734417,
+        "avg_precision": 0.734475,
+        "tp": 4537,
+        "fp": 1330,
+        "tn": 5516,
+        "fn": 5185
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.194274,
+          "fnr": 0.0,
+          "accuracy": 0.805726,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.602089,
+          "precision": 0.682046,
+          "recall": 0.538912,
+          "fpr": 0.194274,
+          "fnr": 0.461088,
+          "accuracy": 0.689374,
+          "auc_roc": 0.855172,
+          "auc_pr": 0.741568,
+          "avg_precision": 0.741733,
+          "tp": 2853,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 2441
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.262749,
+          "precision": 0.151244,
+          "recall": 1.0,
+          "fpr": 0.194274,
+          "fnr": 0.0,
+          "accuracy": 0.812226,
+          "auc_roc": 0.806623,
+          "auc_pr": 0.079838,
+          "avg_precision": 0.080159,
+          "tp": 237,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 0
+        },
+        "manipulation": {
+          "f1": 0.256707,
+          "precision": 0.189519,
+          "recall": 0.397698,
+          "fpr": 0.194274,
+          "fnr": 0.602302,
+          "accuracy": 0.763896,
+          "auc_roc": 0.749924,
+          "auc_pr": 0.176013,
+          "avg_precision": 0.176751,
+          "tp": 311,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 471
+        },
+        "fake the source of data": {
+          "f1": 0.394056,
+          "precision": 0.366365,
+          "recall": 0.426275,
+          "fpr": 0.194274,
+          "fnr": 0.573725,
+          "accuracy": 0.72659,
+          "auc_roc": 0.761838,
+          "auc_pr": 0.360598,
+          "avg_precision": 0.361063,
+          "tp": 769,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 1035
+        },
+        "unknown": {
+          "f1": 0.022569,
+          "precision": 0.019174,
+          "recall": 0.027426,
+          "fpr": 0.194274,
+          "fnr": 0.972574,
+          "accuracy": 0.71106,
+          "auc_roc": 0.390302,
+          "auc_pr": 0.095104,
+          "avg_precision": 0.095503,
+          "tp": 26,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 922
+        },
+        "http abusion": {
+          "f1": 0.292955,
+          "precision": 0.204069,
+          "recall": 0.519026,
+          "fpr": 0.194274,
+          "fnr": 0.480974,
+          "accuracy": 0.780621,
+          "auc_roc": 0.723176,
+          "auc_pr": 0.141839,
+          "avg_precision": 0.142091,
+          "tp": 341,
+          "fp": 1330,
+          "tn": 5516,
+          "fn": 316
+        }
+      },
+      "throughput": {
+        "batch_size": 1,
+        "mean_rps": 6973.0,
+        "device": "cpu",
+        "p99_ms": 0.143,
+        "throughput_rps": 6972.9
+      },
+      "elapsed_s": 2.376,
+      "slo_verdicts": {
+        "fpr": "FAIL",
+        "latency_p99": "PASS",
+        "throughput": "FAIL"
+      }
+    },
+    "aho_corasick_fast_match": {
+      "model": "aho_corasick_fast_match",
+      "overall": {
+        "f1": 0.585994,
+        "precision": 0.735175,
+        "recall": 0.487143,
+        "fpr": 0.249197,
+        "fnr": 0.512857,
+        "accuracy": 0.596089,
+        "auc_roc": 0.616378,
+        "auc_pr": 0.683803,
+        "avg_precision": 0.683871,
+        "tp": 4736,
+        "fp": 1706,
+        "tn": 5140,
+        "fn": 4986
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.249197,
+          "fnr": 0.0,
+          "accuracy": 0.750803,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.590982,
+          "precision": 0.632486,
+          "recall": 0.55459,
+          "fpr": 0.249197,
+          "fnr": 0.44541,
+          "accuracy": 0.665239,
+          "auc_roc": 0.814652,
+          "auc_pr": 0.658723,
+          "avg_precision": 0.658913,
+          "tp": 2936,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 2358
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.249197,
+          "fnr": 1.0,
+          "accuracy": 0.725681,
+          "auc_roc": 0.571188,
+          "auc_pr": 0.038148,
+          "avg_precision": 0.038306,
+          "tp": 0,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 237
+        },
+        "manipulation": {
+          "f1": 0.281174,
+          "precision": 0.192617,
+          "recall": 0.52046,
+          "fpr": 0.249197,
+          "fnr": 0.47954,
+          "accuracy": 0.727189,
+          "auc_roc": 0.692453,
+          "auc_pr": 0.142845,
+          "avg_precision": 0.14305,
+          "tp": 407,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 375
+        },
+        "fake the source of data": {
+          "f1": 0.433735,
+          "precision": 0.362957,
+          "recall": 0.538803,
+          "fpr": 0.249197,
+          "fnr": 0.461197,
+          "accuracy": 0.70659,
+          "auc_roc": 0.752369,
+          "auc_pr": 0.352538,
+          "avg_precision": 0.353023,
+          "tp": 972,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 832
+        },
+        "unknown": {
+          "f1": 0.009749,
+          "precision": 0.007563,
+          "recall": 0.013713,
+          "fpr": 0.249197,
+          "fnr": 0.986287,
+          "accuracy": 0.66115,
+          "auc_roc": 0.60789,
+          "auc_pr": 0.142032,
+          "avg_precision": 0.142233,
+          "tp": 13,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 935
+        },
+        "http abusion": {
+          "f1": 0.294479,
+          "precision": 0.192999,
+          "recall": 0.621005,
+          "fpr": 0.249197,
+          "fnr": 0.378995,
+          "accuracy": 0.739438,
+          "auc_roc": 0.729559,
+          "auc_pr": 0.139633,
+          "avg_precision": 0.139853,
+          "tp": 408,
+          "fp": 1706,
+          "tn": 5140,
+          "fn": 249
+        }
+      },
+      "latency": {
+        "batch_size": 1,
+        "n_signatures": 41,
+        "p50_us": 3.385,
+        "p99_us": 10.464,
+        "p99_ms": 0.0105,
+        "throughput_rps": 353109.0,
+        "device": "cpu"
+      },
+      "slo_verdicts": {
+        "fpr": "FAIL",
+        "latency_p99": "PASS",
+        "throughput": "PASS"
+      },
+      "phase": "pre_aug"
+    },
+    "xgboost_hashed_ngram_http": {
+      "model": "xgboost_hashed_ngram_http",
+      "include_http_features": true,
+      "train_time_s": 204.9,
+      "best_iteration": 999,
+      "best_val_aucpr": 0.999648,
+      "scale_pos_weight": 0.7042,
+      "n_features": 1048583,
+      "overall": {
+        "f1": 0.99136,
+        "precision": 0.997294,
+        "recall": 0.985497,
+        "fpr": 0.003798,
+        "fnr": 0.014503,
+        "accuracy": 0.98992,
+        "auc_roc": 0.999472,
+        "auc_pr": 0.999635,
+        "avg_precision": 0.999635,
+        "tp": 9581,
+        "fp": 26,
+        "tn": 6820,
+        "fn": 141
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.003798,
+          "fnr": 0.0,
+          "accuracy": 0.996202,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.99651,
+          "precision": 0.995103,
+          "recall": 0.997922,
+          "fpr": 0.003798,
+          "fnr": 0.002078,
+          "accuracy": 0.996952,
+          "auc_roc": 0.999893,
+          "auc_pr": 0.999853,
+          "avg_precision": 0.999853,
+          "tp": 5283,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 11
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.948,
+          "precision": 0.901141,
+          "recall": 1.0,
+          "fpr": 0.003798,
+          "fnr": 0.0,
+          "accuracy": 0.996329,
+          "auc_roc": 0.999946,
+          "auc_pr": 0.9981,
+          "avg_precision": 0.998105,
+          "tp": 237,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 0
+        },
+        "manipulation": {
+          "f1": 0.949285,
+          "precision": 0.965608,
+          "recall": 0.933504,
+          "fpr": 0.003798,
+          "fnr": 0.066496,
+          "accuracy": 0.989775,
+          "auc_roc": 0.997513,
+          "auc_pr": 0.984199,
+          "avg_precision": 0.984207,
+          "tp": 730,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 52
+        },
+        "fake the source of data": {
+          "f1": 0.99118,
+          "precision": 0.985746,
+          "recall": 0.996674,
+          "fpr": 0.003798,
+          "fnr": 0.003326,
+          "accuracy": 0.996301,
+          "auc_roc": 0.999685,
+          "auc_pr": 0.999281,
+          "avg_precision": 0.999281,
+          "tp": 1798,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 6
+        },
+        "unknown": {
+          "f1": 0.947027,
+          "precision": 0.971175,
+          "recall": 0.924051,
+          "fpr": 0.003798,
+          "fnr": 0.075949,
+          "accuracy": 0.987426,
+          "auc_roc": 0.997903,
+          "auc_pr": 0.986937,
+          "avg_precision": 0.986944,
+          "tp": 876,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 72
+        },
+        "http abusion": {
+          "f1": 0.980597,
+          "precision": 0.961933,
+          "recall": 1.0,
+          "fpr": 0.003798,
+          "fnr": 0.0,
+          "accuracy": 0.996535,
+          "auc_roc": 0.999922,
+          "auc_pr": 0.999015,
+          "avg_precision": 0.999016,
+          "tp": 657,
+          "fp": 26,
+          "tn": 6820,
+          "fn": 0
+        }
+      },
+      "latency": {
+        "batch_size": 64,
+        "n_runs": 50,
+        "p50_ms": 34.392,
+        "p95_ms": 51.016,
+        "p99_ms": 52.589,
+        "throughput_rps": 1585.2,
+        "device": "cuda"
+      },
+      "slo_verdicts": {
+        "fpr": "FAIL",
+        "latency_p99": "FAIL",
+        "throughput": "FAIL"
+      },
+      "phase": "pre_aug"
+    },
+    "xgboost_hashed_ngram_ablation": {
+      "model": "xgboost_hashed_ngram_ablation",
+      "include_http_features": false,
+      "train_time_s": 204.48,
+      "best_iteration": 998,
+      "best_val_aucpr": 0.999651,
+      "scale_pos_weight": 0.7042,
+      "n_features": 1048576,
+      "overall": {
+        "f1": 0.991566,
+        "precision": 0.997605,
+        "recall": 0.9856,
+        "fpr": 0.00336,
+        "fnr": 0.0144,
+        "accuracy": 0.990162,
+        "auc_roc": 0.999452,
+        "auc_pr": 0.99962,
+        "avg_precision": 0.99962,
+        "tp": 9582,
+        "fp": 23,
+        "tn": 6823,
+        "fn": 140
+      },
+      "per_class": {
+        "benign": {
+          "f1": 0.0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "fpr": 0.00336,
+          "fnr": 0.0,
+          "accuracy": 0.99664,
+          "auc_roc": NaN,
+          "auc_pr": NaN,
+          "avg_precision": NaN,
+          "tp": 0,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 0
+        },
+        "injection": {
+          "f1": 0.996792,
+          "precision": 0.995665,
+          "recall": 0.997922,
+          "fpr": 0.00336,
+          "fnr": 0.002078,
+          "accuracy": 0.997199,
+          "auc_roc": 0.999883,
+          "auc_pr": 0.999839,
+          "avg_precision": 0.999839,
+          "tp": 5283,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 11
+        },
+        "scanning for vulnerable software": {
+          "f1": 0.953722,
+          "precision": 0.911538,
+          "recall": 1.0,
+          "fpr": 0.00336,
+          "fnr": 0.0,
+          "accuracy": 0.996753,
+          "auc_roc": 0.999934,
+          "auc_pr": 0.997614,
+          "avg_precision": 0.997621,
+          "tp": 237,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 0
+        },
+        "manipulation": {
+          "f1": 0.951823,
+          "precision": 0.969496,
+          "recall": 0.934783,
+          "fpr": 0.00336,
+          "fnr": 0.065217,
+          "accuracy": 0.990299,
+          "auc_roc": 0.997499,
+          "auc_pr": 0.983883,
+          "avg_precision": 0.983892,
+          "tp": 731,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 51
+        },
+        "fake the source of data": {
+          "f1": 0.992,
+          "precision": 0.98737,
+          "recall": 0.996674,
+          "fpr": 0.00336,
+          "fnr": 0.003326,
+          "accuracy": 0.996647,
+          "auc_roc": 0.999684,
+          "auc_pr": 0.999279,
+          "avg_precision": 0.999279,
+          "tp": 1798,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 6
+        },
+        "unknown": {
+          "f1": 0.948565,
+          "precision": 0.974416,
+          "recall": 0.924051,
+          "fpr": 0.00336,
+          "fnr": 0.075949,
+          "accuracy": 0.987811,
+          "auc_roc": 0.997772,
+          "auc_pr": 0.986404,
+          "avg_precision": 0.98641,
+          "tp": 876,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 72
+        },
+        "http abusion": {
+          "f1": 0.982797,
+          "precision": 0.966176,
+          "recall": 1.0,
+          "fpr": 0.00336,
+          "fnr": 0.0,
+          "accuracy": 0.996935,
+          "auc_roc": 0.999915,
+          "auc_pr": 0.998961,
+          "avg_precision": 0.998961,
+          "tp": 657,
+          "fp": 23,
+          "tn": 6823,
+          "fn": 0
+        }
+      },
+      "latency": {
+        "batch_size": 64,
+        "n_runs": 50,
+        "p50_ms": 32.215,
+        "p95_ms": 51.318,
+        "p99_ms": 62.655,
+        "throughput_rps": 1645.5,
+        "device": "cuda"
+      },
+      "slo_verdicts": {
+        "fpr": "FAIL",
+        "latency_p99": "FAIL",
+        "throughput": "FAIL"
+      },
+      "phase": "pre_aug"
+    }
+  },
+  "latency_throughput": {
+    "latency_by_model": {
+      "teacher_99m_cuda": {
+        "results": [
+          {
+            "batch_size": 1,
+            "p50_ms": 2.575,
+            "p99_ms": 3.166,
+            "p99_9_ms": 3.71,
+            "jitter_std_ms": 0.233,
+            "throughput_rps": 388.3,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 8,
+            "p50_ms": 9.967,
+            "p99_ms": 11.028,
+            "p99_9_ms": 11.322,
+            "jitter_std_ms": 0.424,
+            "throughput_rps": 802.6,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 32,
+            "p50_ms": 37.578,
+            "p99_ms": 38.459,
+            "p99_9_ms": 39.62,
+            "jitter_std_ms": 0.391,
+            "throughput_rps": 851.6,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 64,
+            "p50_ms": 83.173,
+            "p99_ms": 86.936,
+            "p99_9_ms": 87.564,
+            "jitter_std_ms": 1.094,
+            "throughput_rps": 769.5,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 256,
+            "p50_ms": 339.399,
+            "p99_ms": 353.396,
+            "p99_9_ms": 355.749,
+            "jitter_std_ms": 5.101,
+            "throughput_rps": 754.3,
+            "n_samples": 500
+          }
+        ],
+        "slo": {
+          "p99_ok": true,
+          "p99_9_ok": true,
+          "rps_ok": false,
+          "p99_ms": 3.166,
+          "p99_9_ms": 3.71,
+          "rps": 388.3,
+          "target_p99_ms": 5.0,
+          "target_rps": 10000
+        }
+      },
+      "student_cuda": {
+        "results": [
+          {
+            "batch_size": 1,
+            "p50_ms": 1.27,
+            "p99_ms": 1.313,
+            "p99_9_ms": 1.339,
+            "jitter_std_ms": 0.014,
+            "throughput_rps": 787.6,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 8,
+            "p50_ms": 1.289,
+            "p99_ms": 2.274,
+            "p99_9_ms": 2.788,
+            "jitter_std_ms": 0.155,
+            "throughput_rps": 6207.9,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 32,
+            "p50_ms": 3.64,
+            "p99_ms": 3.931,
+            "p99_9_ms": 4.196,
+            "jitter_std_ms": 0.095,
+            "throughput_rps": 8791.0,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 64,
+            "p50_ms": 7.295,
+            "p99_ms": 7.457,
+            "p99_9_ms": 7.67,
+            "jitter_std_ms": 0.084,
+            "throughput_rps": 8773.2,
+            "n_samples": 500
+          },
+          {
+            "batch_size": 256,
+            "p50_ms": 34.397,
+            "p99_ms": 35.818,
+            "p99_9_ms": 37.997,
+            "jitter_std_ms": 0.562,
+            "throughput_rps": 7442.5,
+            "n_samples": 500
+          }
+        ],
+        "slo": {
+          "p99_ok": true,
+          "p99_9_ok": true,
+          "rps_ok": false,
+          "p99_ms": 1.313,
+          "p99_9_ms": 1.339,
+          "rps": 787.6,
+          "target_p99_ms": 5.0,
+          "target_rps": 10000
+        }
+      }
+    },
+    "memory_footprint": {
+      "teacher_99m": {
+        "checkpoint_mb": 375.8
+      },
+      "student": {
+        "checkpoint_mb": 12.8
+      }
+    },
+    "pcie_overhead_ms": {
+      "1": 0.009,
+      "8": 0.011,
+      "32": 0.011,
+      "64": 0.012,
+      "256": 0.02
+    },
+    "slo_targets": {
+      "inline_p99_ms": 5.0,
+      "throughput_rps": 10000
+    },
+    "methodology": {
+      "n_timing_samples": 500,
+      "percentiles_reported": [
+        "p50",
+        "p99",
+        "p99.9"
+      ],
+      "jitter_metric": "std_dev_ms"
+    },
+    "timings_s": {
+      "pcie_overhead": 0.136,
+      "benchmark_teacher_cuda": 261.614,
+      "benchmark_student_cuda": 26.496
+    }
+  },
+  "memory_footprint": {
+    "teacher_99m": {
+      "disk_mb": 394.0,
+      "n_params": 98487554,
+      "vram_weights_fp16_mb": 197.0,
+      "vram_weights_int8_mb": 98.5,
+      "gpu_peak_activation_mb": 439.9
+    },
+    "student": {
+      "disk_mb": 13.4,
+      "n_params": 6853634,
+      "vram_weights_fp16_mb": 13.7,
+      "vram_weights_int8_mb": 6.9,
+      "gpu_peak_activation_mb": 64.9
+    },
+    "student_onnx": {
+      "disk_mb": 27.5
+    }
+  },
+  "adversarial_robustness": {
+    "teacher_99m": [
+      {
+        "tamper": "space2comment",
+        "detection": 1.0,
+        "evasion": 0.0
+      },
+      {
+        "tamper": "between_comments",
+        "detection": 1.0,
+        "evasion": 0.0
+      },
+      {
+        "tamper": "randomcase",
+        "detection": 1.0,
+        "evasion": 0.0
+      }
+    ],
+    "student": [
+      {
+        "tamper": "space2comment",
+        "detection": 0.999,
+        "evasion": 0.001
+      },
+      {
+        "tamper": "between_comments",
+        "detection": 0.999,
+        "evasion": 0.001
+      },
+      {
+        "tamper": "randomcase",
+        "detection": 0.999,
+        "evasion": 0.001
+      }
+    ],
+    "timings_s": {
+      "evaluate_teacher_99m": 12.486,
+      "evaluate_student": 1.279
+    }
+  },
+  "obfuscation_robustness": {
+    "results": [
+      {
+        "chain": "space2comment+randomcase",
+        "detection_rate": 1.0,
+        "evasion_rate": 0.0
+      },
+      {
+        "chain": "randomcase+url_encode",
+        "detection_rate": 0.999,
+        "evasion_rate": 0.001
+      },
+      {
+        "chain": "url_encode+double_url_encode",
+        "detection_rate": 1.0,
+        "evasion_rate": 0.0
+      },
+      {
+        "chain": "double_url_encode+hex_encode",
+        "detection_rate": 1.0,
+        "evasion_rate": 0.0
+      }
+    ],
+    "timings_s": {
+      "chained_evaluation": 16.251
+    }
+  },
+  "novel_attack_generalization": {
+    "graphql_injection": {
+      "n_generated": 500,
+      "n_unique": 404,
+      "n_detected": 404,
+      "detection_rate": 1.0,
+      "evasion_rate": 0.0,
+      "ci_95_low": 0.99058,
+      "ci_95_high": 1.0,
+      "evasion_examples": []
+    },
+    "jwt_manipulation": {
+      "n_generated": 500,
+      "n_unique": 500,
+      "n_detected": 261,
+      "detection_rate": 0.522,
+      "evasion_rate": 0.478,
+      "ci_95_low": 0.47821,
+      "ci_95_high": 0.56545,
+      "evasion_examples": [
+        "GET /api/user\r\nAuthorization: Bearer eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAidXF0Z2VseWYiLCAicm9sZSI6ICJhZG1pbiIsICJleHAiOiA5OTk5OTk5OTk5fQ.af03b971722f244f58d669cbee3772a0",
+        "GET /api/admin\r\nAuthorization: Bearer eyJhbGciOiAiSFMyNTYiLCAia2lkIjogIjEnIE9SICcxJz0nMSJ9.eyJzdWIiOiAiZWJqbHpibGciLCAicm9sZSI6ICJzdXBlcnVzZXIiLCAiZXhwIjogOTk5OTk5OTk5OX0.bca0385813dbad3c681d06bd2aa399da",
+        "GET /dashboard\r\nAuthorization: Bearer eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJzdWIiOiAiZWVobXdld2ciLCAicm9sZSI6ICJhZG1pbiIsICJleHAiOiA5OTk5OTk5OTk5fQ.",
+        "GET /api/user\r\nAuthorization: Bearer eyJhbGciOiAiSFMyNTYiLCAia2lkIjogIjEnIE9SICcxJz0nMSJ9.eyJzdWIiOiAiemlrdHdtdWMiLCAicm9sZSI6ICJyb290IiwgImV4cCI6IDk5OTk5OTk5OTl9.47e8e80e952eb9d8e96cf37cb990c801",
+        "GET /dashboard\r\nAuthorization: Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAidHpsaHVndGkiLCAicm9sZSI6ICJzdXBlcnVzZXIiLCAiZXhwIjogOTk5OTk5OTk5OX0.319e1b429ad564b858f9a3e247cb2c08"
+      ]
+    },
+    "http2_desync": {
+      "n_generated": 500,
+      "n_unique": 217,
+      "n_detected": 217,
+      "detection_rate": 1.0,
+      "evasion_rate": 0.0,
+      "ci_95_low": 0.9826,
+      "ci_95_high": 1.0,
+      "evasion_examples": []
+    },
+    "prototype_pollution": {
+      "n_generated": 500,
+      "n_unique": 347,
+      "n_detected": 347,
+      "detection_rate": 1.0,
+      "evasion_rate": 0.0,
+      "ci_95_low": 0.98905,
+      "ci_95_high": 1.0,
+      "evasion_examples": []
+    },
+    "ssrf_injection": {
+      "n_generated": 500,
+      "n_unique": 493,
+      "n_detected": 493,
+      "detection_rate": 1.0,
+      "evasion_rate": 0.0,
+      "ci_95_low": 0.99227,
+      "ci_95_high": 1.0,
+      "evasion_examples": []
+    },
+    "xxe_injection": {
+      "n_generated": 500,
+      "n_unique": 500,
+      "n_detected": 500,
+      "detection_rate": 1.0,
+      "evasion_rate": 0.0,
+      "ci_95_low": 0.99238,
+      "ci_95_high": 1.0,
+      "evasion_examples": []
+    },
+    "timings_s": {
+      "generate_and_evaluate": 9.893
+    }
+  },
+  "tokenizer_ablation": {
+    "track_b": {
+      "oov_rate": 2.2e-05,
+      "avg_seq_len": 256.0,
+      "fertility": 0.7353,
+      "per_class": {
+        "ssti": 2e-05,
+        "header_injection": 0.0,
+        "xss": 0.0,
+        "sqli": 5e-05,
+        "xxe": 0.0,
+        "cmdi": 2e-05,
+        "ssrf": 0.0,
+        "unknown": 4e-05,
+        "benign": 1e-05,
+        "path_traversal": 2e-05,
+        "benign_edge_case": 0.0,
+        "lfi": 8e-05
+      }
+    },
+    "track_a": {
+      "oov_rate": 8e-06,
+      "avg_seq_len": 163.32,
+      "fertility": 0.4691
+    },
+    "lr_probe_track_a": {
+      "auc_pr": 0.999802,
+      "f1": 0.995951,
+      "fpr": 0.010309
+    },
+    "lr_probe_track_b": {
+      "auc_pr": 0.999802,
+      "f1": 0.995951,
+      "fpr": 0.010309
+    },
+    "transformer_correction": {
+      "status": "anchor training failed \u2014 scaling not available",
+      "corrected_estimates": null
+    },
+    "timings_s": {
+      "lr_probe": 26.985,
+      "anchor_track_a": 1.095,
+      "anchor_track_b": 641.624
+    }
+  },
+  "augmentation_ablation": {
+    "full": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655
+    },
+    "drop_aug_synthesis_grammar_lfi": {
+      "auc_pr": 0.999437,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_lfi": {
+      "auc_pr": 0.999457,
+      "delta": -0.0
+    },
+    "drop_aug_synthesis_llm_xss_crs_flagged": {
+      "auc_pr": 0.999438,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_xxe_crs_flagged": {
+      "auc_pr": 0.999377,
+      "delta": -8e-05
+    },
+    "drop_aug_benign_rest": {
+      "auc_pr": 0.971769,
+      "delta": -0.02769
+    },
+    "drop_aug_synthesis_grammar_xxe_crs_flagged": {
+      "auc_pr": 0.999423,
+      "delta": -4e-05
+    },
+    "drop_aug_synthesis_llm_path_traversal_crs_flagged": {
+      "auc_pr": 0.999455,
+      "delta": -0.0
+    },
+    "drop_aug_synthesis_grammar_cmdi_crs_flagged": {
+      "auc_pr": 0.99938,
+      "delta": -8e-05
+    },
+    "drop_aug_synthesis_llm_cmdi_crs_flagged": {
+      "auc_pr": 0.999423,
+      "delta": -4e-05
+    },
+    "drop_aug_synthesis_grammar_path_traversal": {
+      "auc_pr": 0.999528,
+      "delta": 7e-05
+    },
+    "drop_aug_synthesis_grammar_lfi_crs_flagged": {
+      "auc_pr": 0.999451,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_grammar_xss_crs_flagged": {
+      "auc_pr": 0.99945,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_grammar_header_injection_crs_flagged": {
+      "auc_pr": 0.999477,
+      "delta": 2e-05
+    },
+    "drop_aug_synthesis_grammar_xss": {
+      "auc_pr": 0.999446,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_grammar_ssti_crs_flagged": {
+      "auc_pr": 0.999364,
+      "delta": -9e-05
+    },
+    "drop_aug_synthesis_llm_ssrf_crs_flagged": {
+      "auc_pr": 0.999491,
+      "delta": 3e-05
+    },
+    "drop_aug_synthesis_llm_lfi_crs_flagged": {
+      "auc_pr": 0.999443,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_path_traversal": {
+      "auc_pr": 0.999454,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_grammar_ssrf_crs_flagged": {
+      "auc_pr": 0.999443,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_grammar_xxe": {
+      "auc_pr": 0.999437,
+      "delta": -2e-05
+    },
+    "drop_aug_llm_edge": {
+      "auc_pr": 0.998013,
+      "delta": -0.00145
+    },
+    "drop_aug_synthesis_llm_ssti_crs_flagged": {
+      "auc_pr": 0.999441,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_header_injection_crs_flagged": {
+      "auc_pr": 0.999463,
+      "delta": 0.0
+    },
+    "drop_aug_synthesis_grammar_header_injection": {
+      "auc_pr": 0.999454,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_grammar_ssrf": {
+      "auc_pr": 0.999431,
+      "delta": -3e-05
+    },
+    "drop_aug_synthesis_grammar_path_traversal_crs_flagged": {
+      "auc_pr": 0.999462,
+      "delta": 0.0
+    },
+    "drop_aug_llm_edge_crs_flagged": {
+      "auc_pr": 0.999435,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_cmdi": {
+      "auc_pr": 0.999469,
+      "delta": 1e-05
+    },
+    "drop_aug_synthesis_grammar_cmdi": {
+      "auc_pr": 0.999446,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_llm_xss": {
+      "auc_pr": 0.999475,
+      "delta": 2e-05
+    },
+    "drop_aug_llm_benign": {
+      "auc_pr": 0.99944,
+      "delta": -2e-05
+    },
+    "drop_aug_synthesis_llm_ssrf": {
+      "auc_pr": 0.99945,
+      "delta": -1e-05
+    },
+    "drop_aug_synthesis_llm_xxe": {
+      "auc_pr": 0.999468,
+      "delta": 1e-05
+    },
+    "drop_aug_synthesis_llm_header_injection": {
+      "auc_pr": 0.999523,
+      "delta": 6e-05
+    },
+    "drop_aug_synthesis_llm_ssti": {
+      "auc_pr": 0.999481,
+      "delta": 2e-05
+    },
+    "drop_aug_synthesis_grammar_ssti": {
+      "auc_pr": 0.999521,
+      "delta": 6e-05
+    },
+    "timings_s": {
+      "probe_full": 15.079,
+      "probe_ablations": 499.476
+    }
+  },
+  "model_size_scaling": {
+    "student": {
+      "n_params": 6853634,
+      "auc_pr": 0.999956,
+      "f1": 0.99609,
+      "fpr": 0.044586
+    },
+    "track_b_99m": {
+      "n_params": 98487554,
+      "auc_pr": 0.999964,
+      "f1": 0.995608,
+      "fpr": 0.057325
+    },
+    "modsecurity_crs_pl1": {
+      "n_params": "N/A",
+      "auc_pr": 0.682796,
+      "f1": 0.012464
+    },
+    "modsecurity_crs_pl2": {
+      "n_params": "N/A",
+      "auc_pr": 0.695709,
+      "f1": 0.042463
+    },
+    "modsecurity_crs_pl3": {
+      "n_params": "N/A",
+      "auc_pr": 0.725332,
+      "f1": 0.568653
+    },
+    "modsecurity_crs_pl4": {
+      "n_params": "N/A",
+      "auc_pr": 0.734417,
+      "f1": 0.582077
+    },
+    "aho_corasick_fast_match": {
+      "n_params": "N/A",
+      "auc_pr": 0.683803,
+      "f1": 0.585994
+    },
+    "xgboost_hashed_ngram_http": {
+      "n_params": "N/A",
+      "auc_pr": 0.999635,
+      "f1": 0.99136
+    },
+    "xgboost_hashed_ngram_ablation": {
+      "n_params": "N/A",
+      "auc_pr": 0.99962,
+      "f1": 0.991566
+    },
+    "timings_s": {
+      "load_checkpoints": 0.405
+    }
+  },
+  "label_smoothing_ablation": {
+    "eps_0.0": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655,
+      "fpr": 0.008604
+    },
+    "eps_0.05": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655,
+      "fpr": 0.008604
+    },
+    "eps_0.1": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655,
+      "fpr": 0.008604
+    },
+    "eps_0.15": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655,
+      "fpr": 0.008604
+    },
+    "eps_0.2": {
+      "auc_pr": 0.999459,
+      "f1": 0.994655,
+      "fpr": 0.008604
+    },
+    "timings_s": {
+      "smoothing_sweep": 72.375
+    }
+  },
+  "attention_visualization": [
+    {
+      "attack_class": "xss",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/review",
+        "s http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "www",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "windows nt 10.0; wow64) applewebkit/537.36 (khtml, like gecko) chrome/1",
+        "25.0.6422.60",
+        " safari/537.36",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "*/*"
+      ],
+      "cls_attention": [
+        0.005263008177280426,
+        0.0022144359536468983,
+        0.00232871831394732,
+        0.0015533044934272766,
+        0.0012242222437635064,
+        0.0011508263414725661,
+        0.0010226683225482702,
+        0.00127193343359977,
+        0.0023989276960492134,
+        0.001220593461766839,
+        0.0013526499969884753,
+        0.0015008808113634586,
+        0.0015112083638086915,
+        0.0013700745766982436,
+        0.001100868103094399,
+        0.0016500717028975487,
+        0.0011766148963943124,
+        0.00122858549002558,
+        0.0010115739423781633,
+        0.0013372806133702397
+      ],
+      "top5_attended": [
+        [
+          "\\\\\\\\u0078",
+          0.2067
+        ],
+        [
+          "[PAD]",
+          0.1422
+        ],
+        [
+          "\\\\u0041",
+          0.0519
+        ],
+        [
+          "[PAD]",
+          0.0412
+        ],
+        [
+          "\\\\\\\\u00786",
+          0.0388
+        ]
+      ]
+    },
+    {
+      "attack_class": "xss",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/webhooks?",
+        "email=",
+        "msg=",
+        "javascript%3a",
+        "select%20",
+        "autofocus",
+        "%20",
+        "onfocus",
+        "%3d",
+        "%26%23x61%3blert",
+        "%281%29%3e",
+        "%2f",
+        "%3",
+        "e ",
+        "http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "backend"
+      ],
+      "cls_attention": [
+        0.002257950371131301,
+        0.0013781777815893292,
+        0.001226951600983739,
+        0.0018065149197354913,
+        0.0016412663972005248,
+        0.003176105208694935,
+        0.00136245705652982,
+        0.0012205468956381083,
+        0.005334414076060057,
+        0.002105742460116744,
+        0.0020515653304755688,
+        0.0056508188135921955,
+        0.0013773535611107945,
+        0.0011256367433816195,
+        0.0012761530233547091,
+        0.0010815049754455686,
+        0.0012478731805458665,
+        0.0012180173071101308,
+        0.001197060919366777,
+        0.0011987248435616493
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.0828
+        ],
+        [
+          "[PAD]",
+          0.0684
+        ],
+        [
+          "[PAD]",
+          0.0519
+        ],
+        [
+          "[PAD]",
+          0.0381
+        ],
+        [
+          "[PAD]",
+          0.0315
+        ]
+      ]
+    },
+    {
+      "attack_class": "xss",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /admin/",
+        "users?",
+        "title=",
+        "msg=';",
+        "script>alert",
+        "('xss",
+        "')</",
+        "script",
+        ">&",
+        "status=",
+        "paused",
+        "&role=user",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "www",
+        ".example.com",
+        "[UNK]"
+      ],
+      "cls_attention": [
+        0.0016357091953977942,
+        0.005407270509749651,
+        0.00493573397397995,
+        0.0017907320288941264,
+        0.001218788092955947,
+        0.006622109096497297,
+        0.003437790321186185,
+        0.005186807364225388,
+        0.0014526174636557698,
+        0.00112522067502141,
+        0.0011615661205723882,
+        0.0021965722553431988,
+        0.0025758445262908936,
+        0.001151651726104319,
+        0.0011524249566718936,
+        0.014266780577600002,
+        0.0017538340762257576,
+        0.0010215593501925468,
+        0.0011101893614977598,
+        0.0011736308224499226
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1207
+        ],
+        [
+          "[PAD]",
+          0.0799
+        ],
+        [
+          "[PAD]",
+          0.0614
+        ],
+        [
+          "[PAD]",
+          0.0536
+        ],
+        [
+          "[PAD]",
+          0.0379
+        ]
+      ]
+    },
+    {
+      "attack_class": "header_injection",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/products/",
+        "8",
+        "58",
+        "5",
+        "/reviews?rating=",
+        "4",
+        "&sort=",
+        "amou",
+        "nt ",
+        "http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "backend",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 ("
+      ],
+      "cls_attention": [
+        0.0026312435511499643,
+        0.0013837683945894241,
+        0.0013329210923984647,
+        0.0009447659249417484,
+        0.0010881760390475392,
+        0.0012162475613877177,
+        0.0011661649914458394,
+        0.0010674105724319816,
+        0.001503162202425301,
+        0.0013646791921928525,
+        0.0010675027733668685,
+        0.001374603365547955,
+        0.0014523010468110442,
+        0.0011546554742380977,
+        0.0013692880747839808,
+        0.001077987370081246,
+        0.0011221303138881922,
+        0.0015955441631376743,
+        0.001406388939358294,
+        0.0014730129623785615
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.0912
+        ],
+        [
+          "[PAD]",
+          0.0728
+        ],
+        [
+          "[PAD]",
+          0.0572
+        ],
+        [
+          "[PAD]",
+          0.0524
+        ],
+        [
+          "[PAD]",
+          0.0381
+        ]
+      ]
+    },
+    {
+      "attack_class": "header_injection",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/files",
+        "/1",
+        "4",
+        "20",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "www",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "x11; linux ",
+        "i686",
+        "; rv:121.0) gecko/20100101 firefox/121.0",
+        "[UNK]",
+        "\n"
+      ],
+      "cls_attention": [
+        0.006276132073253393,
+        0.001717200386337936,
+        0.0015978174051269889,
+        0.0015104260528460145,
+        0.0012007051846012473,
+        0.0014532244531437755,
+        0.0012807679595425725,
+        0.0012420701095834374,
+        0.0012231077998876572,
+        0.0013604630948975682,
+        0.001587222213856876,
+        0.0012183834332972765,
+        0.001474986202083528,
+        0.0011554018128663301,
+        0.0015528700314462185,
+        0.0011359603377059102,
+        0.0014109486946836114,
+        0.0012799986870959401,
+        0.00139238266274333,
+        0.0012745024869218469
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1419
+        ],
+        [
+          "[PAD]",
+          0.1004
+        ],
+        [
+          "[PAD]",
+          0.0563
+        ],
+        [
+          "[PAD]",
+          0.0435
+        ],
+        [
+          "[PAD]",
+          0.0181
+        ]
+      ]
+    },
+    {
+      "attack_class": "header_injection",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/profile/preferences?lang=",
+        "en",
+        "&timezone=",
+        "as",
+        "ia",
+        "/",
+        "to",
+        "k",
+        "yo",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "x11; linux "
+      ],
+      "cls_attention": [
+        0.0030384662095457315,
+        0.0016251145862042904,
+        0.0018853925867006183,
+        0.001992566976696253,
+        0.001168222283013165,
+        0.002418612828478217,
+        0.0032309507951140404,
+        0.001186608918942511,
+        0.0014568703481927514,
+        0.001336698536761105,
+        0.0013279517879709601,
+        0.0012325135758146644,
+        0.0014216559939086437,
+        0.0012238121125847101,
+        0.0013352436944842339,
+        0.0011869344161823392,
+        0.001566761638969183,
+        0.0011789208510890603,
+        0.0011812662705779076,
+        0.0014909937744960189
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.0747
+        ],
+        [
+          "[PAD]",
+          0.0648
+        ],
+        [
+          "[PAD]",
+          0.0519
+        ],
+        [
+          "[PAD]",
+          0.0409
+        ],
+        [
+          "[PAD]",
+          0.0395
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssrf",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/auth/verify-email",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "dev",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "macintosh; intel mac os x ",
+        "12_7",
+        ") applewebkit/605.1.15 (khtml, like gecko) version/17.2 safari/605.1.15",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "*/*"
+      ],
+      "cls_attention": [
+        0.01470607053488493,
+        0.0018486821791157126,
+        0.0020599078852683306,
+        0.0017525468720123172,
+        0.0010875435546040535,
+        0.0010759868891909719,
+        0.0020050760358572006,
+        0.001080267713405192,
+        0.0019362075254321098,
+        0.001171934069134295,
+        0.006271271500736475,
+        0.00202617677859962,
+        0.011872713454067707,
+        0.0022337264381349087,
+        0.0011230321833863854,
+        0.0017920685932040215,
+        0.0010890000266954303,
+        0.001650373451411724,
+        0.0012468668865039945,
+        0.0018794202478602529
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.122
+        ],
+        [
+          "[PAD]",
+          0.0297
+        ],
+        [
+          "[PAD]",
+          0.0259
+        ],
+        [
+          "[PAD]",
+          0.0247
+        ],
+        [
+          "request\": \"url=",
+          0.0213
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssrf",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /actuator/health?",
+        "next=url=",
+        "http",
+        ":///",
+        "<",
+        "internal-ip",
+        ">:80/",
+        "cloud-",
+        "metadata",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "dev",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 ("
+      ],
+      "cls_attention": [
+        0.0016288324259221554,
+        0.0011663958430290222,
+        0.0018803314305841923,
+        0.0005604181787930429,
+        0.0008221247117035091,
+        0.0008838715148158371,
+        0.002141371136531234,
+        0.001222571125254035,
+        0.0010361257009208202,
+        0.0006717201904393733,
+        0.0011299991747364402,
+        0.0014278617454692721,
+        0.0015028846682980657,
+        0.0013796094572171569,
+        0.0011661273892968893,
+        0.000996554852463305,
+        0.0012819924158975482,
+        0.0014317637542262673,
+        0.0007987459539435804,
+        0.0011938437819480896
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1988
+        ],
+        [
+          "[PAD]",
+          0.149
+        ],
+        [
+          "[PAD]",
+          0.0896
+        ],
+        [
+          "[PAD]",
+          0.0382
+        ],
+        [
+          "[PAD]",
+          0.0289
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssrf",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/auth/verify-email",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "url=",
+        "file%3a%2f%2f",
+        "0x",
+        "a9fe",
+        "a9fe",
+        "%2f",
+        "latest",
+        "%2f",
+        "meta-data",
+        "%2f",
+        "%3f",
+        "debug",
+        "%3d1",
+        "[UNK]"
+      ],
+      "cls_attention": [
+        0.04367092624306679,
+        0.004426186438649893,
+        0.0030555056873708963,
+        0.001160397077910602,
+        0.0006634365417994559,
+        0.0005498886457644403,
+        0.001592412474565208,
+        0.0006436873809434474,
+        0.0006417335825972259,
+        0.0005792518495582044,
+        0.007615724578499794,
+        0.0008761358330957592,
+        0.0011374372988939285,
+        0.0007947168196551502,
+        0.0006669277790933847,
+        0.0008278822642751038,
+        0.0011606187326833606,
+        0.0006557845044881105,
+        0.0008173002861440182,
+        0.0012603942304849625
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1068
+        ],
+        [
+          "[PAD]",
+          0.0957
+        ],
+        [
+          "12_7",
+          0.0848
+        ],
+        [
+          "webkitformboundary",
+          0.0706
+        ],
+        [
+          "[PAD]",
+          0.0641
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssti",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/orders/bulk",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "api",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "x11; ubuntu; linux x86_64; rv:",
+        "109.0) gecko/20100101 firefox/109",
+        ".0",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "application/json"
+      ],
+      "cls_attention": [
+        0.0033537859562784433,
+        0.0029328567907214165,
+        0.001843258854933083,
+        0.0012678045313805342,
+        0.0012853090884163976,
+        0.00098373182117939,
+        0.0009711046586744487,
+        0.0012328187003731728,
+        0.001324745244346559,
+        0.001186424633488059,
+        0.0027659283950924873,
+        0.0012109854724258184,
+        0.001277003320865333,
+        0.0014328588731586933,
+        0.0011757176835089922,
+        0.0013369208900257945,
+        0.0009429412893950939,
+        0.001153233228251338,
+        0.0009472391684539616,
+        0.0011818230850622058
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1424
+        ],
+        [
+          "[PAD]",
+          0.1166
+        ],
+        [
+          "[PAD]",
+          0.0566
+        ],
+        [
+          "[PAD]",
+          0.0294
+        ],
+        [
+          "[PAD]",
+          0.0177
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssti",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/notifications/mark-read",
+        "?",
+        "greeting=",
+        "template=}}{{",
+        "#{",
+        "7*7}",
+        "&ids=",
+        "93",
+        ",",
+        "32",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "backend",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: "
+      ],
+      "cls_attention": [
+        0.0013424427015706897,
+        0.0040949261747300625,
+        0.0010993372416123748,
+        0.0011528045870363712,
+        0.0011186470510438085,
+        0.0018512117676436901,
+        0.002194969914853573,
+        0.0014140700222924352,
+        0.0020760504994541407,
+        0.003129942575469613,
+        0.001653707236982882,
+        0.0011889253510162234,
+        0.0017944211140275002,
+        0.001481805113144219,
+        0.0017788033001124859,
+        0.0012707397108897567,
+        0.0013269499177113175,
+        0.0011570843635126948,
+        0.001111967139877379,
+        0.0011271912371739745
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1281
+        ],
+        [
+          "[PAD]",
+          0.0566
+        ],
+        [
+          "[PAD]",
+          0.0441
+        ],
+        [
+          "[PAD]",
+          0.0432
+        ],
+        [
+          "[PAD]",
+          0.0375
+        ]
+      ]
+    },
+    {
+      "attack_class": "ssti",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/users/template=",
+        "[\"'",
+        "{{",
+        " system",
+        "('",
+        "ls ",
+        "-la",
+        "') }}",
+        "'\",",
+        "?sort=",
+        "popularity",
+        "&page=46",
+        "&status=completed",
+        "&q=",
+        "union ",
+        "mem",
+        "be",
+        "rs",
+        "h"
+      ],
+      "cls_attention": [
+        0.002415973460301757,
+        0.0019820858724415302,
+        0.0015427583130076528,
+        0.001766846631653607,
+        0.0013659725664183497,
+        0.0024353216867893934,
+        0.0023030040320008993,
+        0.0022831226233392954,
+        0.0013701299903914332,
+        0.0018651009304448962,
+        0.001780279097147286,
+        0.001325075514614582,
+        0.0022353462409228086,
+        0.0013021888444200158,
+        0.0012953467667102814,
+        0.0015341895632445812,
+        0.0018559610471129417,
+        0.0014097372768446803,
+        0.0017351051792502403,
+        0.0014561464777216315
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1101
+        ],
+        [
+          "[PAD]",
+          0.0923
+        ],
+        [
+          "[PAD]",
+          0.0552
+        ],
+        [
+          "[PAD]",
+          0.0289
+        ],
+        [
+          "[PAD]",
+          0.0231
+        ]
+      ]
+    },
+    {
+      "attack_class": "path_traversal",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/reports/file=",
+        "%252500",
+        "..",
+        "%252564",
+        "..%252f",
+        "?q=",
+        "union ",
+        "mem",
+        "be",
+        "rs",
+        "h",
+        "ip",
+        " ben",
+        "ef",
+        "it",
+        "s",
+        "&category=",
+        "be",
+        "au"
+      ],
+      "cls_attention": [
+        0.0032956982031464577,
+        0.001218967023305595,
+        0.001038472168147564,
+        0.0008109975606203079,
+        0.0009085557539947331,
+        0.008655904792249203,
+        0.0011504485737532377,
+        0.000977325951680541,
+        0.0015299567021429539,
+        0.00403358181938529,
+        0.006430580746382475,
+        0.0013452473795041442,
+        0.0011016175849363208,
+        0.0017075599171221256,
+        0.001193162752315402,
+        0.0011625179322436452,
+        0.001797599601559341,
+        0.0010396622819826007,
+        0.0034929297398775816,
+        0.0009126984514296055
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1241
+        ],
+        [
+          "[PAD]",
+          0.1113
+        ],
+        [
+          "[PAD]",
+          0.0699
+        ],
+        [
+          "[PAD]",
+          0.0668
+        ],
+        [
+          "[PAD]",
+          0.0414
+        ]
+      ]
+    },
+    {
+      "attack_class": "path_traversal",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/messages/file=",
+        "0x43",
+        ":\\",
+        "..",
+        "%00",
+        "..%",
+        "0x660x66",
+        "/",
+        "..",
+        "%25",
+        "../../../",
+        "0x650x740x63/0x700x610x730x730x770x64",
+        "?type=",
+        "image",
+        "&limit=20&page=",
+        "13",
+        "&q=",
+        "where ",
+        "to "
+      ],
+      "cls_attention": [
+        0.0027010731864720583,
+        0.002664166269823909,
+        0.0016785702900961041,
+        0.0017402711091563106,
+        0.0014785799430683255,
+        0.0020372781436890364,
+        0.003954483661800623,
+        0.003010933054611087,
+        0.001766412053257227,
+        0.0015814349753782153,
+        0.0017923744162544608,
+        0.004342919681221247,
+        0.0013462891802191734,
+        0.0016793861286714673,
+        0.00153643439989537,
+        0.002088584704324603,
+        0.001370302285067737,
+        0.0018322347896173596,
+        0.002030499977990985,
+        0.001497535384260118
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.0596
+        ],
+        [
+          "[PAD]",
+          0.0587
+        ],
+        [
+          "[PAD]",
+          0.0483
+        ],
+        [
+          "[PAD]",
+          0.0276
+        ],
+        [
+          "[PAD]",
+          0.0269
+        ]
+      ]
+    },
+    {
+      "attack_class": "path_traversal",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/files/file=\"",
+        "\\x00",
+        "\\x2e",
+        "\\x2e",
+        "\\x",
+        "5c",
+        "c",
+        ":\\",
+        "windows\\system32\\",
+        "config",
+        "\\",
+        "system",
+        "\\",
+        "control",
+        "\\",
+        "se",
+        "cur",
+        "ep",
+        "i"
+      ],
+      "cls_attention": [
+        0.00144555966835469,
+        0.0007725860923528671,
+        0.0011003682157024741,
+        0.00043976903543807566,
+        0.0006049738149158657,
+        0.0015019994461908937,
+        0.010598104447126389,
+        0.0005674452986568213,
+        0.003692255588248372,
+        0.002061825944110751,
+        0.01442545186728239,
+        0.008944096975028515,
+        0.004836539272218943,
+        0.0009580441401340067,
+        0.0005289728287607431,
+        0.0007666118908673525,
+        0.0005134870298206806,
+        0.0008304950897581875,
+        0.0008308758842758834,
+        0.005647280719131231
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.2209
+        ],
+        [
+          "[PAD]",
+          0.133
+        ],
+        [
+          "[PAD]",
+          0.0748
+        ],
+        [
+          "[PAD]",
+          0.0374
+        ],
+        [
+          "[PAD]",
+          0.0361
+        ]
+      ]
+    },
+    {
+      "attack_class": "cmdi",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/labels?",
+        "ping=host=",
+        "%22%27%20",
+        "%7c",
+        "%7c%20",
+        "%28",
+        "l",
+        "en",
+        "%28",
+        "0x",
+        "3a",
+        "5b",
+        "65",
+        "72",
+        "73",
+        "2f",
+        "77",
+        "72",
+        "697"
+      ],
+      "cls_attention": [
+        0.00150375347584486,
+        0.00156351865734905,
+        0.0016054125735536218,
+        0.0009246317204087973,
+        0.001363977324217558,
+        0.002139689866453409,
+        0.0020163562148809433,
+        0.0013036183081567287,
+        0.0029533319175243378,
+        0.0010697896359488368,
+        0.0013934079324826598,
+        0.0011611459776759148,
+        0.0019919441547244787,
+        0.0014168433845043182,
+        0.005803123582154512,
+        0.0021320804953575134,
+        0.0017174393869936466,
+        0.0011561285937204957,
+        0.0024651424027979374,
+        0.0009594071307219565
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.1104
+        ],
+        [
+          "[PAD]",
+          0.0942
+        ],
+        [
+          "[PAD]",
+          0.0875
+        ],
+        [
+          "[PAD]",
+          0.0336
+        ],
+        [
+          "[PAD]",
+          0.031
+        ]
+      ]
+    },
+    {
+      "attack_class": "cmdi",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/analytics/event",
+        "s?from=20",
+        "23-07-01",
+        "&limit=25&page=",
+        "26",
+        "&event_type=",
+        "login",
+        "&",
+        "shell=host=",
+        "$(",
+        "bash",
+        "${ifs}-",
+        "i",
+        "${ifs}",
+        ">&",
+        "${ifs}/",
+        "dev/",
+        "tcp",
+        "/"
+      ],
+      "cls_attention": [
+        0.007195965852588415,
+        0.0008003930561244488,
+        0.004210188984870911,
+        0.00221358984708786,
+        0.0006234147003851831,
+        0.000783217663411051,
+        0.0015677340561524034,
+        0.0008147755288518965,
+        0.0005159610882401466,
+        0.0032674225512892008,
+        0.0023717395961284637,
+        0.0011143552837893367,
+        0.0031710986513644457,
+        0.0006169751868583262,
+        0.0004350244125816971,
+        0.0005919049144722521,
+        0.0016825789352878928,
+        0.0005058638635091484,
+        0.0039928872138261795,
+        0.0029050614684820175
+      ],
+      "top5_attended": [
+        [
+          "[PAD]",
+          0.3855
+        ],
+        [
+          "[PAD]",
+          0.0571
+        ],
+        [
+          "[PAD]",
+          0.0524
+        ],
+        [
+          "[PAD]",
+          0.0213
+        ],
+        [
+          "[PAD]",
+          0.015
+        ]
+      ]
+    },
+    {
+      "attack_class": "cmdi",
+      "label": 1,
+      "pred": 1,
+      "prob_malicious": 1.0,
+      "tokens": [
+        "[CLS]",
+        "post /",
+        "graph",
+        "q",
+        "l ",
+        "http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "www",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "iphone; cpu iphone os 17_4 like mac os x",
+        ") applewebkit/605.1.15 (khtml, like gecko) version/17.0 mobile/15e148 safari/604.1",
+        "[UNK]",
+        "\n",
+        "accep"
+      ],
+      "cls_attention": [
+        0.003911496140062809,
+        0.001750134862959385,
+        0.0016405769856646657,
+        0.0064255776815116405,
+        0.0013879066100344062,
+        0.001461347914300859,
+        0.0015923265600576997,
+        0.001444038120098412,
+        0.0015328977024182677,
+        0.0015646126121282578,
+        0.0015673747984692454,
+        0.0013963308883830905,
+        0.0016958379419520497,
+        0.0013762391172349453,
+        0.0023045374546200037,
+        0.0013153338804841042,
+        0.0026419435162097216,
+        0.001383899594657123,
+        0.0014025302371010184,
+        0.0013771671801805496
+      ],
+      "top5_attended": [
+        [
+          "/**/-",
+          0.0402
+        ],
+        [
+          "\", \"query\": \"host=",
+          0.0395
+        ],
+        [
+          "/**/",
+          0.0391
+        ],
+        [
+          "$(",
+          0.0349
+        ],
+        [
+          "env",
+          0.0321
+        ]
+      ]
+    }
+  ],
+  "shap_analysis": [
+    {
+      "text_preview": "POST /api/v1/reviews HTTP/1.1\r\nHost: www.example.com\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; WOW6",
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/review",
+        "s http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "www",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "windows nt 10.0; wow64) applewebkit/537.36 (khtml, like gecko) chrome/1",
+        "25.0.6422.60",
+        " safari/537.36",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "*/*"
+      ],
+      "shap_values": [
+        0.0,
+        0.0,
+        0.0006201429767541882,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "top5": [
+        [
+          "\\\\u00783",
+          0.00081
+        ],
+        [
+          "\\\\u0043",
+          0.00066
+        ],
+        [
+          "s http/1.1",
+          0.00062
+        ],
+        [
+          "close",
+          0.0006
+        ],
+        [
+          "20",
+          0.00054
+        ]
+      ]
+    },
+    {
+      "text_preview": "GET /api/v1/products/8585/reviews?rating=4&sort=amount HTTP/1.1\r\nHost: backend.example.com\r\nUser-Age",
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/products/",
+        "8",
+        "58",
+        "5",
+        "/reviews?rating=",
+        "4",
+        "&sort=",
+        "amou",
+        "nt ",
+        "http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "backend",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 ("
+      ],
+      "shap_values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0004440740371602812,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "top5": [
+        [
+          "x-forwarded-",
+          0.00089
+        ],
+        [
+          "[PAD]",
+          0.00078
+        ],
+        [
+          "[PAD]",
+          0.00064
+        ],
+        [
+          "[PAD]",
+          0.00063
+        ],
+        [
+          "[PAD]",
+          0.00052
+        ]
+      ]
+    },
+    {
+      "text_preview": "POST /api/v1/auth/verify-email HTTP/1.1\r\nHost: dev.example.com\r\nUser-Agent: Mozilla/5.0 (Macintosh; ",
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/auth/verify-email",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "dev",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "macintosh; intel mac os x ",
+        "12_7",
+        ") applewebkit/605.1.15 (khtml, like gecko) version/17.2 safari/605.1.15",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "*/*"
+      ],
+      "shap_values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "top5": [
+        [
+          "[PAD]",
+          0.001
+        ],
+        [
+          "[PAD]",
+          0.00073
+        ],
+        [
+          "720",
+          0.00061
+        ],
+        [
+          "\\\\u0078",
+          0.00058
+        ],
+        [
+          "[PAD]",
+          0.00046
+        ]
+      ]
+    },
+    {
+      "text_preview": "POST /api/v1/orders/bulk HTTP/1.1\r\nHost: api.example.com\r\nUser-Agent: Mozilla/5.0 (X11; Ubuntu; Linu",
+      "tokens": [
+        "[CLS]",
+        "post /api/v1/orders/bulk",
+        " http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "api",
+        ".example.com",
+        "[UNK]",
+        "\n",
+        "user-agent: ",
+        "mozilla/5.0 (",
+        "x11; ubuntu; linux x86_64; rv:",
+        "109.0) gecko/20100101 firefox/109",
+        ".0",
+        "[UNK]",
+        "\n",
+        "accep",
+        "t: ",
+        "application/json"
+      ],
+      "shap_values": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "top5": [
+        [
+          "template=",
+          0.00081
+        ],
+        [
+          "connec",
+          0.00072
+        ],
+        [
+          "[PAD]",
+          0.00069
+        ],
+        [
+          "tion: ",
+          0.00056
+        ],
+        [
+          "[PAD]",
+          0.00048
+        ]
+      ]
+    },
+    {
+      "text_preview": "GET /api/v1/webhooks?email=msg=javascript%3Aselect%20autofocus%20onfocus%3D%26%23x61%3Blert%281%29%3",
+      "tokens": [
+        "[CLS]",
+        "get /api/v1/webhooks?",
+        "email=",
+        "msg=",
+        "javascript%3a",
+        "select%20",
+        "autofocus",
+        "%20",
+        "onfocus",
+        "%3d",
+        "%26%23x61%3blert",
+        "%281%29%3e",
+        "%2f",
+        "%3",
+        "e ",
+        "http/1.1",
+        "[UNK]",
+        "\n",
+        "host: ",
+        "backend"
+      ],
+      "shap_values": [
+        0.0,
+        0.0005994077865370788,
+        0.0,
+        0.0006395056925243574,
+        0.0005891086147789735,
+        0.0,
+        0.0,
+        0.0,
+        0.0005717511885269329,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "top5": [
+        [
+          "[PAD]",
+          0.00071
+        ],
+        [
+          "msg=",
+          0.00064
+        ],
+        [
+          "get /api/v1/webhooks?",
+          0.0006
+        ],
+        [
+          "javascript%3a",
+          0.00059
+        ],
+        [
+          "onfocus",
+          0.00057
+        ]
+      ]
+    }
+  ],
+  "error_analysis": {
+    "n_fp": 9,
+    "n_fn": 0,
+    "fp_class_distribution": {
+      "benign": 8,
+      "benign_edge_case": 1
+    },
+    "fn_class_distribution": {},
+    "worst_fp_examples": [
+      {
+        "text": "POST /tienda1/publico/registro.jsp HTTP/1.1 HTTP/1.1\r\nUser-Agent: Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nAccept: text/xml,a",
+        "prob": 0.9987,
+        "class": "benign"
+      },
+      {
+        "text": "POST /tienda1/publico/registro.jsp HTTP/1.1 HTTP/1.1\r\nUser-Agent: Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nAccept: text/xml,a",
+        "prob": 0.9956,
+        "class": "benign"
+      },
+      {
+        "text": "GET /api/v1/stats?query=SLEEP for 5 seconds then return the server load average?{} HTTP/1.1\r\nUser-Agent: custom bot (https://github.com/example-bot)\r\nAccept: text/plain\r\nHost: www.example.com\r\n\r\nNone",
+        "prob": 0.9946,
+        "class": "benign_edge_case"
+      },
+      {
+        "text": "GET /tienda1/miembros/editar.jsp?modo=registro&login=kangning&password=635l82rab74id35&nombre=Alexsandra&apellidos=Basset+Ramos&email=campanini-adamson%40barebackspain.kh&dni=39509298J&direccion=Trave",
+        "prob": 0.9939,
+        "class": "benign"
+      },
+      {
+        "text": "OPTIONS /blog/wp-includes/js/plupload/plupload.min.js?ver=2.1.9 HTTP/1.1\r\nReferer: mCnHif2F7XIXfUx=J1Hvm1FpSdUT1hRQWb9iG5Pj0TcdbQD00KT14Ram; wordpress_logged_in_1aefbe2f76edd740f8e362f39da3353b=rafael",
+        "prob": 0.9779,
+        "class": "benign"
+      },
+      {
+        "text": "POST /api/v1/webhooks HTTP/1.1\r\nHost: api.example.com\r\nUser-Agent: Mozilla/5.0 (X11; Linux i686; rv:121.0) Gecko/20100101 Firefox/121.0\r\nAccept: application/json;charset=UTF-8\r\nAccept-Language: pt-BR\r",
+        "prob": 0.9776,
+        "class": "benign"
+      },
+      {
+        "text": "POST /tienda1/miembros/editar.jsp HTTP/1.1 HTTP/1.1\r\nUser-Agent: Mozilla/5.0 (compatible; Konqueror/3.5; Linux) KHTML/3.5.8 (like Gecko)\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nAccept: text/xml,ap",
+        "prob": 0.9595,
+        "class": "benign"
+      },
+      {
+        "text": "POST /api/v1/reviews HTTP/1.1\r\nHost: staging.example.com\r\nUser-Agent: Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1\r\nAc",
+        "prob": 0.8759,
+        "class": "benign"
+      },
+      {
+        "text": "GET /tienda1/miembros/editar.jsp?modo=registro&login=sonne&password=a4561o9nz68&nombre=Caleb&apellidos=Fit%E0+Irizibar&email=deering%40asociaciondearquitectoslatinoamericanos.sv&dni=70153248M&direccio",
+        "prob": 0.8398,
+        "class": "benign"
+      }
+    ],
+    "worst_fn_examples": []
+  },
+  "master_comparison_table": [
+    {
+      "Model": "track_b_99m",
+      "F1": 0.995608,
+      "Precision": 0.991254,
+      "Recall": 1.0,
+      "FPR": 0.057325,
+      "AUC-PR": 0.999964,
+      "AUC-ROC": 0.999763,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "student",
+      "F1": 0.99609,
+      "Precision": 0.993177,
+      "Recall": 0.99902,
+      "FPR": 0.044586,
+      "AUC-PR": 0.999956,
+      "AUC-ROC": 0.999713,
+      "mean_evasion_rate": 0.001,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": 13.4,
+      "n_params": 6853634.0,
+      "vram_fp16_mb": 13.7,
+      "p99_ms_bs1": 1.313,
+      "p99_9_ms_bs1": 1.339,
+      "jitter_std_ms": 0.014,
+      "RPS_bs1": 787.6,
+      "latency_device": "cuda",
+      "SLO_p99_ok": true,
+      "SLO_p99_9_ok": true,
+      "SLO_rps_ok": false
+    },
+    {
+      "Model": "xgboost_hashed_ngram_http",
+      "F1": 0.99136,
+      "Precision": 0.997294,
+      "Recall": 0.985497,
+      "FPR": 0.003798,
+      "AUC-PR": 0.999635,
+      "AUC-ROC": 0.999472,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "xgboost_hashed_ngram_ablation",
+      "F1": 0.991566,
+      "Precision": 0.997605,
+      "Recall": 0.9856,
+      "FPR": 0.00336,
+      "AUC-PR": 0.99962,
+      "AUC-ROC": 0.999452,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "modsecurity_crs_pl4",
+      "F1": 0.582077,
+      "Precision": 0.773308,
+      "Recall": 0.466674,
+      "FPR": 0.194274,
+      "AUC-PR": 0.734417,
+      "AUC-ROC": 0.683544,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "modsecurity_crs_pl3",
+      "F1": 0.568653,
+      "Precision": 0.767751,
+      "Recall": 0.451553,
+      "FPR": 0.193982,
+      "AUC-PR": 0.725332,
+      "AUC-ROC": 0.677229,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "modsecurity_crs_pl2",
+      "F1": 0.042463,
+      "Precision": 0.976852,
+      "Recall": 0.021703,
+      "FPR": 0.00073,
+      "AUC-PR": 0.695709,
+      "AUC-ROC": 0.610974,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "aho_corasick_fast_match",
+      "F1": 0.585994,
+      "Precision": 0.735175,
+      "Recall": 0.487143,
+      "FPR": 0.249197,
+      "AUC-PR": 0.683803,
+      "AUC-ROC": 0.616378,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    },
+    {
+      "Model": "modsecurity_crs_pl1",
+      "F1": 0.012464,
+      "Precision": 0.924242,
+      "Recall": 0.006274,
+      "FPR": 0.00073,
+      "AUC-PR": 0.682796,
+      "AUC-ROC": 0.60289,
+      "mean_evasion_rate": NaN,
+      "mean_novel_detection": 0.78886,
+      "disk_mb": NaN,
+      "n_params": NaN,
+      "vram_fp16_mb": NaN,
+      "p99_ms_bs1": NaN,
+      "p99_9_ms_bs1": NaN,
+      "jitter_std_ms": NaN,
+      "RPS_bs1": NaN,
+      "latency_device": NaN,
+      "SLO_p99_ok": NaN,
+      "SLO_p99_9_ok": NaN,
+      "SLO_rps_ok": NaN
+    }
+  ]
+}

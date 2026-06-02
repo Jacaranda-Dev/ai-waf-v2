@@ -439,9 +439,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="06_novel_attack_generalization"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="06_novel_attack_generalization") as _run:
             mlflow.log_params({
                 "n_samples_per_class": n_samples,
                 "seed":                seed,
@@ -450,6 +449,8 @@ def run(args: argparse.Namespace) -> None:
             metrics: dict[str, float] = {}
             detection_rates = []
             for attack_name, info in results.items():
+                if not isinstance(info, dict) or "detection_rate" not in info:
+                    continue
                 dr = info["detection_rate"]
                 detection_rates.append(dr)
                 metrics[f"detection_{attack_name}"]  = float(dr)

@@ -86,13 +86,23 @@ def _batch_score(
     model.eval()
     all_probs, all_preds = [], []
 
-    for i in range(0, len(texts), batch_size):
-        chunk = texts[i : i + batch_size]
-        enc   = tokenizer.encode_batch(chunk)
-        ids   = torch.tensor(enc["input_ids"],      device=device)
-        mask  = torch.tensor(enc["attention_mask"],  device=device)
+    pad_id  = tokenizer.pad_token_id
+    seq_len = tokenizer.seq_len
 
-        with torch.no_grad(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    for i in range(0, len(texts), batch_size):
+        chunk    = texts[i : i + batch_size]
+        encodings = tokenizer.encode_batch(chunk)  # list[Encoding]
+        ids_list, mask_list = [], []
+        for enc in encodings:
+            raw_ids  = enc.ids[:seq_len]
+            raw_mask = enc.attention_mask[:seq_len]
+            pad      = seq_len - len(raw_ids)
+            ids_list.append(raw_ids  + [pad_id] * pad)
+            mask_list.append(raw_mask + [0]      * pad)
+        ids   = torch.tensor(ids_list,  dtype=torch.long, device=device)
+        mask  = torch.tensor(mask_list, dtype=torch.long, device=device)
+
+        with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
             out   = model(ids, mask)
             probs = torch.softmax(out["logits"].float(), dim=-1)[:, 1].cpu().numpy()
 

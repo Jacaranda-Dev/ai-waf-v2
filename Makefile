@@ -34,7 +34,7 @@ ifeq ($(MODE),research)
     INSTALL_TARGET := .[research]
     KERNEL_DESC := "Python (ai-waf-v2 Research)"
 else
-    INSTALL_TARGET := .[dev,research,full]
+    INSTALL_TARGET := .[research,full]
     KERNEL_DESC := "Python (ai-waf-v2 Full Stack)"
 endif
 

@@ -16,6 +16,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -68,24 +69,38 @@ def _train_epoch(
 ) -> dict:
     model.train()
     total_loss, correct, total = 0.0, 0, 0
+    nan_streak = 0
     for batch in loader:
         input_ids      = batch["input_ids"].to(device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         labels         = batch["labels"].to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             out  = model(input_ids, attention_mask)
             loss = out["loss"] if "loss" in out else nn.CrossEntropyLoss()(out["logits"], labels)
 
+        loss_val = loss.item()
+        if not math.isfinite(loss_val):
+            nan_streak += 1
+            if nan_streak >= 20:
+                raise RuntimeError(
+                    f"Teacher training diverged: 20 consecutive non-finite losses. "
+                    "Check LR, data quality, and model dimensions."
+                )
+            scaler.update()
+            continue
+
+        nan_streak = 0
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
-        nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        scaler.step(optimizer)
+        grad_norm = nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        if math.isfinite(grad_norm.item()):
+            scaler.step(optimizer)
         scaler.update()
         scheduler.step()
 
-        total_loss += loss.item() * labels.size(0)
+        total_loss += loss_val * labels.size(0)
         preds = out["logits"].argmax(-1)
         correct += (preds == labels).sum().item()
         total   += labels.size(0)
@@ -106,7 +121,7 @@ def _eval_epoch(
         attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         labels         = batch["labels"].to(device, non_blocking=True)
 
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
             out  = model(input_ids, attention_mask)
             loss = out["loss"] if "loss" in out else nn.CrossEntropyLoss()(out["logits"], labels)
 
@@ -199,13 +214,14 @@ def run(args: argparse.Namespace) -> None:
     # ── Optimiser & scheduler ─────────────────────
     optimizer = AdamW(
         teacher.parameters(),
-        lr=tcfg.lr,
+        lr=tcfg.peak_lr,
         weight_decay=tcfg.weight_decay,
         fused=torch.cuda.is_available(),
     )
-    total_steps = tcfg.epochs * len(train_loader)
-    scheduler   = OneCycleLR(optimizer, max_lr=tcfg.lr, total_steps=total_steps, pct_start=0.05)
-    scaler      = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
+    n_epochs    = max(1, tcfg.max_steps // len(train_loader))
+    total_steps = n_epochs * len(train_loader)
+    scheduler   = OneCycleLR(optimizer, max_lr=tcfg.peak_lr, total_steps=total_steps, pct_start=0.05)
+    scaler      = torch.amp.GradScaler("cuda", enabled=torch.cuda.is_available())
 
     # ── MLflow ────────────────────────────────────
     init_experiment(cfg)
@@ -216,27 +232,27 @@ def run(args: argparse.Namespace) -> None:
         mlflow.log_params({
             "model":       "track_b_99m",
             "n_params":    n_params,
-            "epochs":      tcfg.epochs,
+            "epochs":      n_epochs,
             "batch_size":  tcfg.batch_size,
-            "lr":          tcfg.lr,
+            "lr":          tcfg.peak_lr,
             "vocab_size":  teacher_cfg.vocab_size,
             "seq_len":     cfg.tokenizer.seq_len,
         })
 
         best_val_loss = float("inf")
         patience_count = 0
-        early_stop_patience = getattr(tcfg, "early_stop_patience", 5)
+        early_stop_patience = tcfg.early_stopping_patience
 
         with timer.step("training"):
-            for epoch in range(1, tcfg.epochs + 1):
+            for epoch in range(1, n_epochs + 1):
                 t0 = time.perf_counter()
                 train_m = _train_epoch(teacher, train_loader, optimizer, scheduler,
-                                       device, scaler, tcfg.grad_clip)
+                                       device, scaler, tcfg.grad_clip_norm)
                 val_m   = _eval_epoch(teacher, val_loader, device)
                 elapsed = time.perf_counter() - t0
 
                 log.info(
-                    f"Epoch {epoch:03d}/{tcfg.epochs} | "
+                    f"Epoch {epoch:03d}/{n_epochs} | "
                     f"train_loss={train_m['loss']:.4f} train_acc={train_m['acc']:.4f} | "
                     f"val_loss={val_m['loss']:.4f} val_acc={val_m['acc']:.4f} | "
                     f"{elapsed:.1f}s"

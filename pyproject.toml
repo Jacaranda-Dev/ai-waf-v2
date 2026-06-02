@@ -36,7 +36,7 @@ dependencies = [
     # quantization & export
     "bitsandbytes>=0.43",
     "onnx>=1.16",
-    "onnxruntime-gpu>=1.17",
+    "onnxscript>=0.1",      # required by torch.onnx.export in PyTorch >=2.9
     "optimum>=1.17",        # HuggingFace optimum (ONNX export helpers)
  
     # experiment tracking
@@ -62,7 +62,6 @@ dependencies = [
     
     "kagglehub>=0.2.0",
     "hydra-core",
-    "tensorrt"
 ]
 
 [project.optional-dependencies]
@@ -80,14 +79,16 @@ research = [
     "pytest-cov>=5.0",
      "notebook",
 ]
-# For students training models and running the full pipeline
+# GPU inference + TensorRT benchmarking — requires CUDA toolkit pre-installed
 full = [
     "torch",
     "transformers",
     "mlflow",
-    "onnxruntime",
+    "onnxruntime-gpu>=1.17",  # replaces base onnxruntime with GPU-enabled build
     "scikit-learn",
-    "onnx"
+    "onnx>=1.16",
+    "pycuda",                  # required for TensorRT benchmarking (Stage 6.5)
+    "tensorrt",                # install via: pip install tensorrt (needs CUDA 11/12)
 ]
 
 [tool.setuptools.packages.find]

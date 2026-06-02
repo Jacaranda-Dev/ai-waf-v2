@@ -102,14 +102,22 @@ def _tokenize_batch(
     results: list[list[str]] = []
     for text in texts:
         try:
+            # HuggingFace transformers path: encode() returns list[int]
             ids = tokenizer.encode(
                 text,
                 add_special_tokens=add_special_tokens,
                 truncation=False,          # Intentionally NOT truncating here
             )
-        except Exception:
-            ids = tokenizer.encode(text)   # Fallback for HttpTokenizer signature
-        tokens = tokenizer.convert_ids_to_tokens(ids)
+            tokens = tokenizer.convert_ids_to_tokens(ids)
+        except TypeError:
+            # HttpTokenizer.encode() does not accept keyword arguments and
+            # returns an Encoding object, not list[int]. Use the dedicated
+            # no-truncation path so truncation_rate is computed correctly.
+            if hasattr(tokenizer, "encode_no_truncation"):
+                enc = tokenizer.encode_no_truncation(text)
+            else:
+                enc = tokenizer.encode(text)
+            tokens = enc.tokens
         results.append(tokens)
     return results
 
@@ -203,6 +211,31 @@ def compute_per_class_metrics(
 # 4. Unified metric schema
 # ---------------------------------------------------------------------------
 
+def _compute_per_class_from_seqs(
+    token_seqs: list[list[str]],
+    texts: list[str],
+    labels: list[str],
+    seq_len: int,
+    unk_token: str = "[UNK]",
+) -> dict[str, dict[str, float]]:
+    """Per-class metrics reusing already-computed token sequences (no re-tokenization)."""
+    class_data: dict[str, tuple[list, list]] = defaultdict(lambda: ([], []))
+    for seq, text, label in zip(token_seqs, texts, labels):
+        class_data[label][0].append(seq)
+        class_data[label][1].append(text)
+
+    per_class: dict[str, dict[str, float]] = {}
+    for cls in sorted(class_data.keys()):
+        seqs, cls_texts = class_data[cls]
+        per_class[cls] = {
+            "oov_rate":        compute_oov_rate(seqs, unk_token),
+            "fertility":       compute_fertility(seqs, cls_texts),
+            "truncation_rate": compute_truncation_rate(seqs, seq_len),
+            "n_samples":       len(cls_texts),
+        }
+    return per_class
+
+
 def compute_full_metrics(
     tokenizer: _Tokenizer,
     texts: list[str],
@@ -229,7 +262,7 @@ def compute_full_metrics(
     """
     token_seqs = _tokenize_batch(tokenizer, texts)
 
-    global_metrics: dict[str, Any] = {
+    return {
         "track":              track_name,
         "n_samples":          len(texts),
         "seq_len":            seq_len,
@@ -238,11 +271,10 @@ def compute_full_metrics(
         "fertility":          compute_fertility(token_seqs, texts),
         "truncation_rate":    compute_truncation_rate(token_seqs, seq_len),
         "subword_char_ratio": subword_char_ratio(token_seqs, texts),
-        "per_class":          compute_per_class_metrics(
-                                  tokenizer, texts, labels, seq_len, unk_token
+        "per_class":          _compute_per_class_from_seqs(
+                                  token_seqs, texts, labels, seq_len, unk_token
                               ),
     }
-    return global_metrics
 
 
 # ---------------------------------------------------------------------------

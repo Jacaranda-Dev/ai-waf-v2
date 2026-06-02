@@ -1,4 +1,4 @@
-"""Stage 7.2 — SHAP analysis on the student model (small enough for KernelSHAP)."""
+"""Stage 7.12 — SHAP analysis on the student model (small enough for KernelSHAP)."""
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
@@ -68,7 +68,8 @@ def run(args):
         results.append({"text_preview": text[:100],
                          "tokens": toks[:20], "shap_values": svals[:20],
                          "top5": [(toks[j] if j < len(toks) else "PAD", round(v,5)) for j,v in top5]})
-        log.info(f"  top token: {results[-1][\'top5\'][0]}")
+        top_token = results[-1]["top5"][0] if results[-1]["top5"] else "?"
+        log.info(f"  top token: {top_token}")
     out = Path(cfg.paths.reports)/"metrics"/"shap_analysis.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
@@ -76,9 +77,8 @@ def run(args):
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="12_shap_analysis"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="12_shap_analysis") as _run:
             mlflow.log_params({
                 "n_background_samples": len(background_texts),
                 "n_test_samples":       len(test_malicious[:5]),

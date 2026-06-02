@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -29,6 +30,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
 
+sys.path.insert(0, str(Path(__file__).parent))
 from tokenizer_eval import (
     build_comparison_report,
     compute_full_metrics,
@@ -150,10 +152,10 @@ def run(args: argparse.Namespace) -> None:
     cached_a = _load_cached(reports_dir / "tokenizer_oov_track_a.json")
     cached_b = _load_cached(reports_dir / "tokenizer_oov_track_b.json")
 
-    if cached_a and cached_b:
+    if cached_a and cached_b and not args.recompute:
         log.info(
             "Using pre-computed metrics from scripts 02 & 04 "
-            "(set --recompute to override)."
+            "(pass --recompute to override)."
         )
         metrics_a = cached_a
         metrics_b = cached_b

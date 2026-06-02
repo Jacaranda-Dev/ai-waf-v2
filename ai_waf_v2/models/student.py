@@ -153,12 +153,22 @@ class StudentClassifier(nn.Module):
         return preds, probs
 
     def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return sum(p.numel() for p in self.parameters())
 
-    def prepare_for_int8_quantization(self) -> "StudentClassifier":
+    def prepare_for_int8_quantization(
+        self,
+        exclude_modules: list[str] | None = None,
+    ) -> "StudentClassifier":
         """
         Replace Linear layers with bitsandbytes Linear8bitLt for INT8
         quantization-aware training.
+
+        Parameters
+        ----------
+        exclude_modules : list[str] | None
+            Names of top-level child modules to skip.  Defaults to ``["head"]``
+            because the 2-class output projection has dimensions too small for
+            the cublasLt INT8 kernel (minimum alignment requirements).
 
         Requires: pip install bitsandbytes
         Call BEFORE moving model to GPU.
@@ -171,6 +181,8 @@ class StudentClassifier(nn.Module):
                 "Install with: pip install bitsandbytes"
             ) from e
 
+        excluded = set(exclude_modules if exclude_modules is not None else ["head"])
+
         def _replace_linear(module: nn.Module) -> None:
             for name, child in module.named_children():
                 if isinstance(child, nn.Linear):
@@ -181,15 +193,16 @@ class StudentClassifier(nn.Module):
                         has_fp16_weights=False,
                         threshold=6.0,
                     )
-                    new.weight = child.weight
+                    new.weight.data = child.weight.data.clone()
                     if child.bias is not None:
-                        new.bias = child.bias
+                        new.bias.data = child.bias.data.clone()
                     setattr(module, name, new)
                 else:
                     _replace_linear(child)
 
-        # Apply only to encoder layers (not embeddings or final norm)
-        _replace_linear(self.encoder.layers)
+        for name, child in self.named_children():
+            if name not in excluded:
+                _replace_linear(child)
         return self
 
     def save(self, path: str | Path) -> None:
@@ -206,6 +219,28 @@ class StudentClassifier(nn.Module):
         map_location: str = "cpu",
     ) -> "StudentClassifier":
         model = cls.from_config(cfg, teacher_d_model=teacher_d_model)
-        state = torch.load(path, map_location=map_location, weights_only=True)
-        model.load_state_dict(state)
-        return model
+        # weights_only=False: bnb state dicts contain plain Python strings
+        # (weight_format) that weights_only=True rejects.
+        state = torch.load(path, map_location="cpu", weights_only=False)
+
+        if any(k.endswith(".SCB") for k in state):
+            # Checkpoint was saved after INT8 quantization.
+            # Dequantize back to fp32: w_fp32 = w_int8 * (SCB / 127).
+            # This avoids cublasLt kernel failures on tiny output dims (e.g. the
+            # 2-class head) and makes the checkpoint portable to CPU inference.
+            clean: dict[str, torch.Tensor] = {}
+            for k, v in state.items():
+                if k.endswith((".SCB", ".weight_format")):
+                    continue
+                if k.endswith(".weight") and v.dtype == torch.int8:
+                    scb_key = k[: -len("weight")] + "SCB"
+                    if scb_key in state:
+                        scb = state[scb_key].float()          # (out_features,)
+                        clean[k] = v.float() * scb.view(-1, 1) / 127.0
+                        continue
+                clean[k] = v
+            model.load_state_dict(clean)
+        else:
+            model.load_state_dict(state)
+
+        return model.to(map_location)

@@ -19,11 +19,13 @@ Public API
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 import torch
+from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import AdamW
@@ -196,6 +198,9 @@ def build_optimizer(
 # 4. Training epoch
 # ---------------------------------------------------------------------------
 
+_NAN_STREAK_LIMIT = 20  # consecutive non-finite losses before aborting
+
+
 def run_epoch(
     model:       nn.Module,
     loader:      DataLoader,
@@ -203,20 +208,24 @@ def run_epoch(
     scheduler:   LambdaLR,
     device:      torch.device,
     accum_steps: int = 1,
-    scaler:      torch.cuda.amp.GradScaler | None = None,
+    scaler:      Any | None = None,
     loss_fn:     Callable[[torch.Tensor, torch.Tensor], torch.Tensor] | None = None,
 ) -> dict[str, float]:
     """
     Run one full training epoch with optional gradient accumulation and AMP.
 
+    When `scaler` is provided (a torch.cuda.amp.GradScaler), uses fp16 autocast
+    with dynamic loss scaling — required for DeBERTa-v3 which is numerically
+    unstable under bf16.  Without a scaler, falls back to bf16.
+
     Args:
         model:       The complete model (backbone + classifier).
         loader:      DataLoader yielding collated batches.
         optimizer:   AdamW instance.
-        scheduler:   LambdaLR instance (stepped every micro-batch).
+        scheduler:   LambdaLR instance (stepped after each accumulation window).
         device:      Target device.
         accum_steps: Gradient accumulation window.
-        scaler:      AMP GradScaler; pass None to disable mixed precision.
+        scaler:      GradScaler for fp16 training; None → bf16.
         loss_fn:     Callable(logits, labels) → scalar loss.
                      Defaults to cross-entropy.
 
@@ -226,42 +235,70 @@ def run_epoch(
     if loss_fn is None:
         loss_fn = nn.CrossEntropyLoss()
 
+    if device.type == "cuda":
+        dtype = torch.float16 if scaler is not None else torch.bfloat16
+        autocast_ctx = torch.amp.autocast("cuda", dtype=dtype)
+    else:
+        autocast_ctx = contextlib.nullcontext()
+
     model.train()
     total_loss = 0.0
     steps      = 0
+    nan_streak = 0
 
     optimizer.zero_grad()
 
-    for i, batch in enumerate(loader):
+    pbar = tqdm(loader, desc="train", unit="batch", dynamic_ncols=True, leave=False)
+    for i, batch in enumerate(pbar):
         input_ids  = batch["input_ids"].to(device)
         attn_mask  = batch["attention_mask"].to(device)
         labels     = batch["labels"].to(device)
 
-        use_amp = scaler is not None
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with autocast_ctx:
             logits = model(input_ids=input_ids, attention_mask=attn_mask)
             loss   = loss_fn(logits, labels) / accum_steps
 
-        if use_amp:
+        loss_val = loss.item()
+        if not math.isfinite(loss_val):
+            nan_streak += 1
+            pbar.write(f"[warn] non-finite loss at batch {i}; skipping backward")
+            if nan_streak >= _NAN_STREAK_LIMIT:
+                raise RuntimeError(
+                    f"Training diverged: {nan_streak} consecutive non-finite losses. "
+                    "Model weights are likely NaN — check LR, mixed-precision dtype, "
+                    "and data quality. For DeBERTa pass a GradScaler to use fp16."
+                )
+            optimizer.zero_grad()
+            continue
+
+        nan_streak = 0
+
+        if scaler is not None:
             scaler.scale(loss).backward()
         else:
             loss.backward()
 
         if (i + 1) % accum_steps == 0:
-            if use_amp:
+            if scaler is not None:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(optimizer)
-                scaler.update()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            if not math.isfinite(grad_norm.item()):
+                pbar.write(f"[warn] non-finite grad_norm={grad_norm.item():.4f} at step {steps}; skipping optimizer step")
+                optimizer.zero_grad()
+                if scaler is not None:
+                    scaler.update()
             else:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                steps += 1
 
-            scheduler.step()
-            optimizer.zero_grad()
-            steps += 1
-
-        total_loss += loss.item() * accum_steps
+        total_loss += loss_val * accum_steps
+        pbar.set_postfix(loss=f"{total_loss / (i + 1):.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
 
     return {"loss": total_loss / max(len(loader), 1), "steps": steps}
 
@@ -296,13 +333,20 @@ def evaluate(
     all_preds: list[int] = []
     all_labels: list[int] = []
 
-    for batch in loader:
+    autocast_ctx = (
+        torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        if device.type == "cuda"
+        else contextlib.nullcontext()
+    )
+
+    for batch in tqdm(loader, desc="eval", unit="batch", dynamic_ncols=True, leave=False):
         input_ids = batch["input_ids"].to(device)
         attn_mask = batch["attention_mask"].to(device)
         labels    = batch["labels"].to(device)
 
-        logits = model(input_ids=input_ids, attention_mask=attn_mask)
-        total_loss += loss_fn(logits, labels).item()
+        with autocast_ctx:
+            logits = model(input_ids=input_ids, attention_mask=attn_mask)
+        total_loss += loss_fn(logits.float(), labels).item()
 
         preds = logits.argmax(dim=-1).cpu().tolist()
         all_preds.extend(preds)
@@ -319,3 +363,15 @@ def evaluate(
         "macro_f1":     round(float(macro_f1), 5),
         "per_class_f1": {i: round(float(v), 5) for i, v in enumerate(per_class)},
     }
+
+
+def flatten_metrics(metrics: dict, prefix: str = "") -> dict[str, float]:
+    """Flatten a metrics dict for MLflow — expands nested dicts into dotted keys."""
+    out: dict[str, float] = {}
+    for k, v in metrics.items():
+        if isinstance(v, dict):
+            for sub_k, sub_v in v.items():
+                out[f"{prefix}{k}_{sub_k}"] = float(sub_v)
+        elif isinstance(v, (int, float)):
+            out[f"{prefix}{k}"] = float(v)
+    return out

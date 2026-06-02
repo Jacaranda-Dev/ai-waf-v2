@@ -13,7 +13,7 @@ Run:
 
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json
 from pathlib import Path
 import torch
 
@@ -40,7 +40,7 @@ def model_size_scaling(cfg) -> dict:
     timer = StepTimer()
     checkpoints = [
         ("student",    Path(cfg.model.student.output_dir)/"best_student.pt",      cfg.model.student,      True),
-        ("teacher_99m",Path(cfg.model.track_b_99m.output_dir)/"best_99m.pt",      cfg.model.track_b_99m,  False),
+        ("track_b_99m",Path(cfg.model.track_b_99m.output_dir)/"best_99m.pt",      cfg.model.track_b_99m,  False),
     ]
 
     reports_dir = Path(cfg.paths.reports) / "metrics"
@@ -64,7 +64,9 @@ def model_size_scaling(cfg) -> dict:
                 "f1":        m.get("f1"),
                 "fpr":       m.get("fpr"),
             }
-            log.info(f"  {label:20s}: params={n_params:,}  AUC-PR={m.get('auc_pr'):.4f}")
+            auc_pr = m.get("auc_pr")
+            auc_pr_str = f"{auc_pr:.4f}" if auc_pr is not None else "N/A"
+            log.info(f"  {label:20s}: params={n_params:,}  AUC-PR={auc_pr_str}")
 
     # Add baselines
     baselines_path = reports_dir / "baselines.json"
@@ -81,9 +83,8 @@ def model_size_scaling(cfg) -> dict:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="09_model_size_scaling"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="09_model_size_scaling") as _run:
             metrics: dict[str, float] = {}
             for label, info in results.items():
                 if not isinstance(info, dict):
@@ -104,18 +105,6 @@ def model_size_scaling(cfg) -> dict:
 
 
 
-# ─────────────────────────────────────────────────────────
-# Dispatch
-# ─────────────────────────────────────────────────────────
-
-DISPATCH = {
-    "07_tokenizer_ablation":        tokenizer_ablation,
-    "08_augmentation_ablation":     augmentation_ablation,
-    "09_model_size_scaling":        model_size_scaling,
-    "10_label_smoothing_ablation":  label_smoothing_ablation,
-}
-
-
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
@@ -128,15 +117,7 @@ def run(args: argparse.Namespace) -> None:
         args.force, "Stage 7.9 model size scaling"
     ):
         return
-    script_name = Path(sys.argv[0]).stem
-    fn = DISPATCH.get(script_name)
-    if fn is None:
-        # Run all
-        for name, fn in DISPATCH.items():
-            log.info(f"\n{'='*40}\n{name}\n{'='*40}")
-            fn(cfg)
-    else:
-        fn(cfg)
+    model_size_scaling(cfg)
 
 
 def parse_args():

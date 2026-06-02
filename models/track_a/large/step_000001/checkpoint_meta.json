@@ -1,0 +1,13 @@
+{
+  "epoch": 1,
+  "train_loss": 0.2693895266236533,
+  "loss": 0.02511076609682591,
+  "accuracy": 0.99497,
+  "macro_f1": 0.99347,
+  "per_class_f1": {
+    "0": 0.99035,
+    "1": 0.9966
+  },
+  "step": 1,
+  "experiment_type": "track_a_large"
+}

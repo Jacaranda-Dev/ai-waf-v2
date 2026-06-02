@@ -361,9 +361,10 @@ Benchmarks reported: p50 / p95 / p99 latency at batch=1 (inline) and batch=64 (o
 ## Stage 7 — Evaluation
 
 **Directory:** `stages/7_evaluation/`  
-**Make targets:** `make eval_detection`, `make eval_only`, `make compare_all`
+**Make targets:** `make eval_detection`, `make eval_latency`, `make eval_adversarial`, `make eval_ablation`, `make eval_interp`, `make compare_all`, `make report`  
+**Full reference:** [docs/stage7_evaluation.md](stage7_evaluation.md)
 
-Comprehensive evaluation suite covering detection efficacy, latency, adversarial robustness, ablations, and interpretability.
+Comprehensive evaluation suite covering detection efficacy, latency, adversarial robustness, ablations, interpretability, and artifact publishing.
 
 ### Scripts
 
@@ -371,42 +372,43 @@ Comprehensive evaluation suite covering detection efficacy, latency, adversarial
 
 | Script | Purpose |
 |---|---|
-| `01_detection_metrics.py` | Full metric suite on the test split: F1, AUC-PR, AUC-ROC, FPR, precision, recall, per-class breakdown; threshold selected at FPR=0.001 |
-| `02_latency_bench.py` | p50/p95/p99 latency and throughput at batch=1 (inline) and batch=64 (offline); SLO PASS/FAIL verdict |
-| `03_memory_footprint.py` | Peak VRAM and activation memory during inference |
+| `01_detection_metrics.py` | Full metric suite (F1, AUC-PR, AUC-ROC, FPR, precision, recall) on the test split for all models; per-class breakdown; FP categorisation by Shannon entropy; K-Means cluster analysis on FP embeddings |
+| `02_latency_bench.py` | p50/p95/p99/p99.9 latency + throughput at batch sizes [1, 8, 32, 64, 256] on GPU and CPU; PCIe transfer overhead measured separately; SLO PASS/FAIL verdict |
+| `03_memory_footprint.py` | Peak VRAM, RSS RAM, and checkpoint sizes for all models |
 
 #### Adversarial Robustness
 
 | Script | Purpose |
 |---|---|
-| `04_evasion_payloads.py` | Detection rate against encoding-mutated attack payloads |
-| `05_obfuscation_robustness.py` | Robustness to comment insertion, whitespace bypass, random casing |
-| `06_novel_attack_generalization.py` | Generalisation to held-out attack classes; zero-shot and few-shot settings |
+| `04_evasion_payloads.py` | Evasion rate against all eight tamper transforms in `TAMPER_REGISTRY`; reports per-tamper and per-model |
+| `05_obfuscation_robustness.py` | Robustness to chained multi-tamper sequences |
+| `06_novel_attack_generalization.py` | Grammar-fuzzed novel attack families (500–1000 variations per class); reports detection rate with 95% Wilson score CIs |
 
 #### Ablations
 
 | Script | Purpose |
 |---|---|
-| `07_tokenizer_ablation.py` | Track A vs Track B tokenizer on the same model weights |
-| `08_augmentation_ablation.py` | Model trained with vs. without synthetic augmentation data |
-| `09_model_size_scaling.py` | AUC-PR vs. parameter count across 8M / 16M / 32M / 50M / 99M configs |
-| `10_label_smoothing_ablation.py` | Effect of label smoothing on calibration and F1 |
+| `07_tokenizer_ablation.py` | Track A vs Track B OOV/fertility/performance; probe + truncated Transformer "Validation Anchor" corrects for proxy gap |
+| `08_augmentation_ablation.py` | Metric delta attributable to synthetic augmentation; LR probe isolates the variable |
+| `09_model_size_scaling.py` | AUC-PR vs. parameter count scaling curve; reads existing checkpoint metrics, no retraining |
+| `10_label_smoothing_ablation.py` | Effect of label smoothing on calibration (ECE) and F1 |
 
 #### Interpretability
 
 | Script | Purpose |
 |---|---|
-| `11_attention_visualization.py` | Attention head heatmaps over token sequences; head specialisation analysis |
-| `12_shap_analysis.py` | SHAP feature importance for classical baseline comparison |
-| `13_error_analysis.py` | Confusion breakdown by attack class; common misclassification patterns |
+| `11_attention_visualization.py` | Attention head heatmaps per attack class; head specialisation analysis; JSON output for offline rendering |
+| `12_shap_analysis.py` | KernelSHAP token importance on the student model (CPU); requires `pip install shap` |
+| `13_error_analysis.py` | FP/FN characterisation and confusion breakdown by attack class |
 
-#### Reporting
+#### Reporting & Publishing
 
 | Script | Purpose |
 |---|---|
-| `14_comparison_table.py` | Master comparison table: all models × all metrics; paper-ready Markdown and LaTeX |
-| `15_generate_report.py` | Aggregates all evaluation JSON outputs into `reports/eval_report.json` and `reports/eval_report.html` |
-| `16_deployment_recommendation.py` | Automated deployment checklist: model selection rationale, SLO validation verdict, rollout strategy recommendation |
+| `14_comparison_table.py` | Master table: all models × all metrics; `master_comparison_table.{csv,json}` |
+| `15_generate_report.py` | Consolidates all eval JSON into `reports/final_evaluation_report.json` |
+| `16_deployment_recommendation.py` | Weighted scoring (AUC-PR 50%, latency 30%, robustness 20%) → deployment decision; exits 1 if no model passes all SLOs |
+| `17_push_to_hub.py` | Pushes all artifacts to HuggingFace Hub (`make push_hub` / `make push_hub_dry`) |
 
 ---
 
@@ -416,17 +418,18 @@ Comprehensive evaluation suite covering detection efficacy, latency, adversarial
 Stage 1  →  data/normalized/*.parquet
 Stage 2  →  data/splits/{train,val,test,adversarial,canary}.parquet
              reports/slos.json
-             reports/baselines/
+             reports/metrics/baselines.json
 Stage 3  →  data/splits/ (augmented, re-split)
 Stage 4  →  tokenizers/track_a/
              tokenizers/track_b/
-Stage 5  →  checkpoints/teacher/{track_a_large,track_a_small,track_b_99m}/best_model
-Stage 6  →  checkpoints/student/best.pt  (calibrated)
-             checkpoints/student/model.onnx
-             checkpoints/student/model.pt  (TorchScript)
-Stage 7  →  reports/eval_report.{json,html}
-             reports/comparison_table.{md,tex}
-             reports/deployment_recommendation.md
+Stage 5  →  models/teacher/{track_a_large,track_a_small}/best_model
+Stage 6  →  models/track_b/99m/best_99m.pt
+             models/student/best_student.pt
+             models/student/student.onnx
+Stage 7  →  reports/metrics/*.json
+             reports/metrics/master_comparison_table.{csv,json}
+             reports/final_evaluation_report.json
+             reports/metrics/deployment_recommendation.json
 ```
 
 All intermediate artefacts use the `HttpRecord` / Parquet schema defined in `ai_waf_v2/data/schema.py`. All training and evaluation metrics are logged to MLflow; run `make ui` to browse them at `localhost:5000`.

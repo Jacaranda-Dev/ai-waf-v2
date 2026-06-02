@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +43,16 @@ W_LATENCY    = 0.3   # latency score (p99 vs SLO)
 W_ROBUSTNESS = 0.2   # 1 − mean_evasion_rate
 
 
+def _clean(v: float | None) -> float:
+    """Coerce None and NaN to 0.0."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return 0.0
+    return v
+
+
 def _Normalize(values: list[float | None]) -> list[float]:
-    """Min-max Normalize a list, treating None as 0."""
-    cleaned = [v if v is not None else 0.0 for v in values]
+    """Min-max normalize a list, treating None/NaN as 0."""
+    cleaned = [_clean(v) for v in values]
     lo, hi  = min(cleaned), max(cleaned)
     if hi == lo:
         return [1.0 if v > 0 else 0.0 for v in cleaned]
@@ -56,7 +64,7 @@ def _latency_score(p99_ms: float | None, slo_ms: float) -> float:
     Returns 1.0 if p99 ≤ SLO, then degrades linearly to 0 at 2× SLO.
     Models missing latency data receive 0.
     """
-    if p99_ms is None:
+    if p99_ms is None or (isinstance(p99_ms, float) and math.isnan(p99_ms)):
         return 0.0
     if p99_ms <= slo_ms:
         return 1.0
@@ -112,7 +120,7 @@ def run(args: argparse.Namespace) -> None:
 
         # Robustness = 1 − evasion_rate  (higher is better)
         robustness = [
-            (1.0 - e) if e is not None else None
+            (1.0 - e) if (e is not None and not (isinstance(e, float) and math.isnan(e))) else None
             for e in evasions
         ]
 
@@ -220,9 +228,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="16_deployment_recommendation"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="16_deployment_recommendation") as _run:
             mlflow.log_params({
                 "w_efficacy":          W_EFFICACY,
                 "w_latency":           W_LATENCY,

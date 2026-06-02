@@ -344,9 +344,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="02_latency_bench"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="02_latency_bench") as _run:
             mlflow.log_params({
                 "n_timing_samples":  N_TIMING_SAMPLES,
                 "batch_sizes":       str(batch_sizes),

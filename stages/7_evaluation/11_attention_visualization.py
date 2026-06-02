@@ -1,7 +1,7 @@
 """
 stages/7_evaluation/11_attention_visualization.py
 -------------------------------------------
-Stage 7.1 — Visualise attention weights on representative malicious samples.
+Stage 7.11 — Visualise attention weights on representative malicious samples.
 
 For each attack class, shows which token positions the model attends to
 in the final encoder layer. Saves heatmap data as JSON (render with
@@ -85,6 +85,54 @@ class AttentionExtractor:
 
     def clear(self) -> None:
         self.weights.clear()
+
+
+def _render_heatmaps(results: list[dict[str, Any]], out_dir: Path) -> None:
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.colors as mcolors
+    except ImportError:
+        log.warning("matplotlib not installed — skipping attention heatmap rendering")
+        return
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Group by attack class
+    by_class: dict[str, list[dict]] = {}
+    for r in results:
+        by_class.setdefault(r["attack_class"], []).append(r)
+
+    for cls, samples in by_class.items():
+        n = len(samples)
+        fig, axes = plt.subplots(n, 1, figsize=(14, 3 * n), squeeze=False)
+        fig.suptitle(f"[CLS] Attention — {cls}", fontsize=13, fontweight="bold")
+
+        for i, (ax, sample) in enumerate(zip(axes[:, 0], samples)):
+            tokens = sample["tokens"]
+            weights = sample["cls_attention"]
+            if not tokens or not weights:
+                ax.set_visible(False)
+                continue
+
+            colors = ["#d62728" if w == max(weights) else "#1f77b4" for w in weights]
+            ax.bar(range(len(tokens)), weights, color=colors)
+            ax.set_xticks(range(len(tokens)))
+            ax.set_xticklabels(tokens, rotation=45, ha="right", fontsize=8)
+            ax.set_ylim(0, max(weights) * 1.25 if max(weights) > 0 else 1.0)
+            ax.set_ylabel("Attention", fontsize=8)
+            ax.set_title(
+                f"pred={'malicious' if sample['pred'] else 'benign'}  "
+                f"p={sample['prob_malicious']:.3f}",
+                fontsize=9, loc="left",
+            )
+
+        fig.tight_layout()
+        path = out_dir / f"{cls}.png"
+        fig.savefig(path, dpi=120, bbox_inches="tight")
+        plt.close(fig)
+        log.info(f"  Saved {path}")
+
+    log.info(f"Attention heatmaps written to {out_dir}/")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -178,13 +226,14 @@ def run(args: argparse.Namespace) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Attention visualization data saved to {out}")
-    log.info(f"Render with: python -c \"import json,matplotlib.pyplot as plt; ...\"")
+
+    if not args.no_render:
+        _render_heatmaps(results, out.parent / "attention_heatmaps")
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="11_attention_visualization"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="11_attention_visualization") as _run:
             mlflow.log_params({
                 "samples_per_class": SAMPLES_PER_CLASS,
                 "n_attack_classes":  len(attack_classes[:6]),
@@ -207,6 +256,8 @@ def parse_args():
     p.add_argument("--config", default="config/pipeline.yaml")
     p.add_argument("--force", action="store_true",
                    help="Re-run even if outputs already exist")
+    p.add_argument("--no-render", action="store_true",
+                   help="Skip matplotlib heatmap generation")
     return p.parse_args()
 
 

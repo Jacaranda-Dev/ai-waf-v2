@@ -12,7 +12,7 @@ Run:
     python stages/7_evaluation/10_label_smoothing_ablation.py --config config/pipeline.yaml
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json
 from pathlib import Path
 import torch
 
@@ -83,9 +83,8 @@ def label_smoothing_ablation(cfg) -> dict:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="10_label_smoothing_ablation"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="10_label_smoothing_ablation") as _run:
             mlflow.log_params({
                 "smoothing_values": str(smoothing_vals),
                 "n_smoothing_levels": len(smoothing_vals),
@@ -106,18 +105,6 @@ def label_smoothing_ablation(cfg) -> dict:
     return results
 
 
-# ─────────────────────────────────────────────────────────
-# Dispatch
-# ─────────────────────────────────────────────────────────
-
-DISPATCH = {
-    "07_tokenizer_ablation":        tokenizer_ablation,
-    "08_augmentation_ablation":     augmentation_ablation,
-    "09_model_size_scaling":        model_size_scaling,
-    "10_label_smoothing_ablation":  label_smoothing_ablation,
-}
-
-
 def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
@@ -130,15 +117,7 @@ def run(args: argparse.Namespace) -> None:
         args.force, "Stage 7.10 label smoothing ablation"
     ):
         return
-    script_name = Path(sys.argv[0]).stem
-    fn = DISPATCH.get(script_name)
-    if fn is None:
-        # Run all
-        for name, fn in DISPATCH.items():
-            log.info(f"\n{'='*40}\n{name}\n{'='*40}")
-            fn(cfg)
-    else:
-        fn(cfg)
+    label_smoothing_ablation(cfg)
 
 
 def parse_args():

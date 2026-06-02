@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from ai_waf_v2.tokenizer.vocab_utils import augment_pretrained_vocab
@@ -21,6 +22,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
 
+sys.path.insert(0, str(Path(__file__).parent))
 from tokenizer_eval import check_token_shadowing, summarise_shadowing
 
 log = get_logger(__name__)

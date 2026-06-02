@@ -15,6 +15,7 @@ Usage
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +36,11 @@ if TYPE_CHECKING:
     from ai_waf_v2.utils.config import PipelineConfig
 
 log = get_logger(__name__)
+
+
+def _has_bnb_layers(model: nn.Module) -> bool:
+    """Return True if model contains any bitsandbytes quantized layers."""
+    return any(type(m).__name__ == "Linear8bitLt" for m in model.modules())
 
 
 class DistillationTrainer:
@@ -62,20 +68,22 @@ class DistillationTrainer:
 
     def __init__(
         self,
-        cfg:          "PipelineConfig",
-        teacher:      "WafClassifier",
-        student:      "StudentClassifier",
-        train_loader: "DataLoader",
-        val_loader:   "DataLoader",
-        device:       torch.device | None = None,
+        cfg:                  "PipelineConfig",
+        teacher:              "WafClassifier",
+        student:              "StudentClassifier",
+        train_loader:         "DataLoader",
+        val_loader:           "DataLoader",
+        device:               torch.device | None = None,
+        temperature_scheduler: object | None = None,
     ) -> None:
-        self.cfg          = cfg
-        self.dcfg         = cfg.training.distillation
-        self.teacher      = teacher
-        self.student      = student
-        self.train_loader = train_loader
-        self.val_loader   = val_loader
-        self.device       = device or (
+        self.cfg                  = cfg
+        self.dcfg                 = cfg.training.distillation
+        self.teacher              = teacher
+        self.student              = student
+        self.train_loader         = train_loader
+        self.val_loader           = val_loader
+        self.temperature_scheduler = temperature_scheduler
+        self.device               = device or (
             torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
 
@@ -122,10 +130,14 @@ class DistillationTrainer:
         )
 
         # ── Mixed precision ────────────────────────────
+        # bf16 autocast is incompatible with bitsandbytes INT8 QAT: bnb does its
+        # own internal fp16 casting, producing gradient dtype mismatches in AdamW.
+        # INT8 already handles memory efficiency, so disable bf16 when bnb is present.
         self._use_bf16 = (
             self.dcfg.precision == "bf16"
             and self.device.type == "cuda"
             and torch.cuda.is_bf16_supported()
+            and not _has_bnb_layers(student)
         )
         self._autocast_ctx = (
             torch.amp.autocast("cuda", dtype=torch.bfloat16)
@@ -135,6 +147,7 @@ class DistillationTrainer:
 
         self._best_auc_pr  = 0.0
         self._global_step  = 0
+        self._patience_count = 0
         self._output_dir   = Path(cfg.model.student.output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -157,6 +170,8 @@ class DistillationTrainer:
 
         step_iter  = iter(self.train_loader)
         step       = 0
+        nan_streak = 0
+        steps_per_epoch = max(len(self.train_loader), 1)
 
         while step < self.dcfg.max_steps:
             try:
@@ -165,15 +180,37 @@ class DistillationTrainer:
                 step_iter = iter(self.train_loader)
                 batch     = next(step_iter)
 
+            # Update temperature if a scheduler was provided (epoch-based)
+            if self.temperature_scheduler is not None:
+                epoch = step // steps_per_epoch + 1
+                self.loss_fn.T = self.temperature_scheduler.get(epoch)
+
             loss_dict = self._train_step(batch, step)
+
+            # Skip NaN/inf losses without updating weights
+            if not math.isfinite(loss_dict["loss"]):
+                nan_streak += 1
+                self.optimizer.zero_grad()
+                if nan_streak >= 20:
+                    raise RuntimeError(
+                        f"Distillation diverged: 20 consecutive non-finite losses. "
+                        "Check LR, temperature, and data quality."
+                    )
+                step += 1
+                continue
+
+            nan_streak = 0
 
             # Gradient accumulation: only update every N micro-steps
             if (step + 1) % self.dcfg.grad_accum_steps == 0:
-                nn.utils.clip_grad_norm_(
+                grad_norm = nn.utils.clip_grad_norm_(
                     self.student.parameters(), self.dcfg.grad_clip_norm
                 )
-                self.optimizer.step()
-                self.scheduler.step()
+                if math.isfinite(grad_norm.item()):
+                    self.optimizer.step()
+                    self.scheduler.step()
+                else:
+                    log.warning(f"Non-finite grad norm at step {self._global_step}; skipping update")
                 self.optimizer.zero_grad()
                 self._global_step += 1
 
@@ -183,14 +220,16 @@ class DistillationTrainer:
                         f"loss={loss_dict['loss']:.4f} | "
                         f"kl={loss_dict['loss_kl']:.4f} | "
                         f"ce={loss_dict['loss_ce']:.4f} | "
-                        f"lr={self.scheduler.get_last_lr()[0]:.2e}"
+                        f"lr={self.scheduler.get_last_lr()[0]:.2e} | "
+                        f"T={self.loss_fn.T:.2f}"
                     )
                     mlflow.log_metrics(
                         {
-                            "train/loss":     loss_dict["loss"],
-                            "train/loss_kl":  loss_dict["loss_kl"],
-                            "train/loss_ce":  loss_dict["loss_ce"],
-                            "train/lr":       self.scheduler.get_last_lr()[0],
+                            "train/loss":        loss_dict["loss"],
+                            "train/loss_kl":     loss_dict["loss_kl"],
+                            "train/loss_ce":     loss_dict["loss_ce"],
+                            "train/lr":          self.scheduler.get_last_lr()[0],
+                            "train/temperature": self.loss_fn.T,
                         },
                         step=self._global_step,
                     )
@@ -200,14 +239,28 @@ class DistillationTrainer:
                 if self._global_step % val_every == 0:
                     val_metrics = self._validate()
                     mlflow.log_metrics(
-                        {f"val/{k}": v for k, v in val_metrics.items()},
+                        {f"val/{k}": float(v) for k, v in val_metrics.items()},
                         step=self._global_step,
                     )
                     auc_pr = val_metrics.get("auc_pr", 0.0)
                     if auc_pr > self._best_auc_pr:
-                        self._best_auc_pr = auc_pr
+                        self._best_auc_pr    = auc_pr
+                        self._patience_count = 0
                         self.student.save(self._output_dir / "best_student.pt")
                         log.info(f"  ✓ new best AUC-PR={auc_pr:.4f} — checkpoint saved")
+                    else:
+                        self._patience_count += 1
+                        log.info(
+                            f"  No improvement ({self._patience_count}/"
+                            f"{self.dcfg.early_stopping_patience})"
+                        )
+                        if self._patience_count >= self.dcfg.early_stopping_patience:
+                            log.info(
+                                f"Early stopping: AUC-PR has not improved for "
+                                f"{self.dcfg.early_stopping_patience} evaluations."
+                            )
+                            mlflow.log_metric("early_stopped_at_step", self._global_step)
+                            break
 
             step += 1
 
@@ -253,9 +306,11 @@ class DistillationTrainer:
             # Scale loss for gradient accumulation
             scaled_loss = loss_dict["loss"] / self.dcfg.grad_accum_steps
 
-        scaled_loss.backward()
+        loss_val = scaled_loss.item() * self.dcfg.grad_accum_steps
+        if math.isfinite(loss_val):
+            scaled_loss.backward()
 
-        return {k: v.item() for k, v in loss_dict.items()}
+        return {k: float(v.item()) for k, v in loss_dict.items()}
 
     def _validate(self) -> dict[str, float]:
         """Run full validation pass and return metrics dict."""

@@ -242,9 +242,8 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="15_generate_report"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="15_generate_report") as _run:
             mlflow.log_params({
                 "sections_found":   len(sections),
                 "sections_total":   len(SECTION_MANIFEST),

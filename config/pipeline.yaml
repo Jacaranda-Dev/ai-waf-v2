@@ -193,7 +193,7 @@ model:
     output_dir:     "models/track_a/large"
 
   track_a_small:
-    base_model:     "prajjwal1/bert-tiny"
+    base_model:     "google/bert_uncased_L-2_H-128_A-2"
     num_labels:     2
     dropout:        0.1
     output_dir:     "models/track_a/small"
@@ -227,9 +227,23 @@ model:
 
 # ─── TRAINING ────────────────────────────────────────
 training:
-  teacher:                          # Track B 99M training
-    batch_size:             256
-    grad_accum_steps:       4       # effective batch = 1024
+  track_a:                          # DeBERTa / BERT fine-tuning (Track A)
+    batch_size:             8
+    grad_accum_steps:       8       # effective batch = 64
+    max_steps:              20000
+    warmup_ratio:           0.06
+    peak_lr:                2.0e-5  # safe for pretrained backbone; backbone gets 2e-6 via 0.1× multiplier
+    weight_decay:           0.01
+    grad_clip_norm:         1.0
+    label_smoothing:        0.1
+    precision:              "bf16"
+    early_stopping_patience: 5
+    early_stopping_metric:  "auc_pr"
+    operating_fpr_target:   0.001
+
+  teacher:                          # Track B 99M training (from scratch)
+    batch_size:             8
+    grad_accum_steps:       4       # effective batch = 32
     max_steps:              50000
     warmup_ratio:           0.06
     peak_lr:                1.0e-4
@@ -264,7 +278,7 @@ training:
 # ─── EVALUATION ──────────────────────────────────────
 evaluation:
   batch_sizes:      [1, 8, 32, 64, 256]
-  devices:          ["gpu", "cpu"]
+  devices:          ["gpu"]
   n_latency_warmup: 50
   n_latency_runs:   500
   metrics:

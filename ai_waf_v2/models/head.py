@@ -165,7 +165,7 @@ class WafClassifier(nn.Module):
         return preds, probs
 
     def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return sum(p.numel() for p in self.parameters())
 
     def save(self, path: str | Path) -> None:
         path = Path(path)

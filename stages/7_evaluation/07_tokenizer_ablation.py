@@ -128,9 +128,10 @@ def _run_anchor_transformer(
         tr_ids, tr_mask, tr_lbl = _encode(sub_texts, sub_labels)
         vl_ids, vl_mask, vl_lbl = _encode(val_texts, val_labels)
 
-        # Build a small transformer using the correct arch config
-        arch_cfg = (cfg.model.track_b_99m if track == "track_b"
-                    else cfg.model.track_a_small)
+        # Both anchors use a small WafEncoder (student arch) trained from scratch.
+        # track_a_small is a pretrained HF BERT config and can't be built here;
+        # tokenizer differences are already captured by the LR probe's TF-IDF vocab.
+        arch_cfg = cfg.model.student
         model    = WafClassifier.from_config(arch_cfg)
         device   = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device).train()
@@ -348,9 +349,8 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
 
     try:
         import mlflow
-        from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
-        init_experiment(cfg)
-        with mlflow.start_run(run_name="07_tokenizer_ablation"):
+        from ai_waf_v2.utils.mlflow_utils import mlflow_run, log_metrics_dict
+        with mlflow_run(cfg, run_name="07_tokenizer_ablation") as _run:
             mlflow.log_params({
                 "anchor_epochs":      anchor_epochs,
                 "anchor_sample_frac": anchor_sample_frac,

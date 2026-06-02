@@ -94,10 +94,16 @@ def log_metrics_dict(
     prefix : str
         Optional prefix added to every key (e.g. "val/").
     """
+    import math
     import mlflow
 
-    prefixed = {f"{prefix}{k}": v for k, v in metrics.items()}
-    mlflow.log_metrics(prefixed, step=step)
+    clean = {
+        f"{prefix}{k}": v
+        for k, v in metrics.items()
+        if isinstance(v, (int, float)) and math.isfinite(v)
+    }
+    if clean:
+        mlflow.log_metrics(clean, step=step)
 
 
 def log_artifact_path(path: str) -> None:

@@ -51,8 +51,16 @@ _HTTP_SPLIT_REGEX = (
     r")"
 )
 
+# HTTP delimiter tokens — written to the BPE corpus by 03_train_custom_bpe.py
+# to preserve header/body structural boundaries. Must be in SPECIAL_TOKENS so
+# the BPE trainer never attempts to merge or split them.
+CRLF_TOKEN = "[CRLF]"
+LF_TOKEN   = "[LF]"
+CR_TOKEN   = "[CR]"
+
 # Special tokens — positions are fixed (match config/pipeline.yaml)
-SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]",
+                  CRLF_TOKEN, LF_TOKEN, CR_TOKEN]
 PAD_TOKEN_ID   = 0
 UNK_TOKEN_ID   = 1
 CLS_TOKEN_ID   = 2
@@ -218,6 +226,18 @@ class HttpTokenizer:
 
     def id_to_token(self, token_id: int) -> str | None:
         return self._tok.id_to_token(token_id)
+
+    def convert_ids_to_tokens(self, ids: list[int]) -> list[str]:
+        """Map integer token IDs to token strings (mirrors HuggingFace interface)."""
+        return [self._tok.id_to_token(i) or "[UNK]" for i in ids]
+
+    def encode_no_truncation(self, text: str) -> "Encoding":
+        """Encode without truncation — used by tokenizer_eval for true sequence lengths."""
+        self._tok.no_truncation()
+        try:
+            return self._tok.encode(text)
+        finally:
+            self._tok.enable_truncation(max_length=self.seq_len)
 
     @property
     def vocab_size(self) -> int:

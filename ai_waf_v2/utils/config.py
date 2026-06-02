@@ -18,6 +18,12 @@ from typing import Any, Optional
 import yaml
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(override=False)   # populate os.environ from .env without overwriting existing vars
+except ImportError:
+    pass
+
 
 # ─────────────────────────────────────────────────────────
 # Sub-models (match config/pipeline.yaml structure exactly)
@@ -274,18 +280,20 @@ class TeacherTrainingConfig(BaseModel):
 
 
 class DistillationTrainingConfig(BaseModel):
-    batch_size:         int   = 128
-    grad_accum_steps:   int   = 8
-    max_steps:          int   = 40_000
-    warmup_ratio:       float = 0.06
-    peak_lr:            float = 2e-4
-    weight_decay:       float = 0.01
-    grad_clip_norm:     float = 1.0
-    precision:          str   = "bf16"
-    alpha_soft:         float = 0.7
-    alpha_hard:         float = 0.3
-    temperature:        float = 4.0
-    hidden_mse_weight:  float = 0.0
+    batch_size:               int   = 128
+    grad_accum_steps:         int   = 8
+    max_steps:                int   = 40_000
+    warmup_ratio:             float = 0.06
+    peak_lr:                  float = 2e-4
+    weight_decay:             float = 0.01
+    grad_clip_norm:           float = 1.0
+    precision:                str   = "bf16"
+    alpha_soft:               float = 0.7
+    alpha_hard:               float = 0.3
+    temperature:              float = 4.0
+    hidden_mse_weight:        float = 0.0
+    early_stopping_patience:  int   = 10
+    early_stopping_metric:    str   = "auc_pr"
 
     @model_validator(mode="after")
     def _check_alpha_sum(self) -> "DistillationTrainingConfig":
@@ -297,8 +305,17 @@ class DistillationTrainingConfig(BaseModel):
         return self
 
 
+class TrackATrainingConfig(TeacherTrainingConfig):
+    """Fine-tuning config for pretrained backbones (DeBERTa, BERT).
+    Uses a lower LR than training-from-scratch to avoid destroying pretrained weights."""
+    peak_lr:    float = 2e-5
+    batch_size: int   = 16
+    grad_accum_steps: int = 4   # effective batch = 64
+
+
 class TrainingConfig(BaseModel):
     teacher:      TeacherTrainingConfig      = Field(default_factory=TeacherTrainingConfig)
+    track_a:      TrackATrainingConfig       = Field(default_factory=TrackATrainingConfig)
     distillation: DistillationTrainingConfig = Field(default_factory=DistillationTrainingConfig)
 
 
