@@ -30,6 +30,7 @@ tokenizers/**
 
 # mlflow
 mlruns/
+!mlruns/mlflow.db
 
 # reports — all generated outputs
 reports/**
