@@ -1,0 +1,42 @@
+# Command Injection (CMI) Attack Taxonomy
+
+Command Injection (CMI) occurs when an application passes unsafe user-supplied data to a system shell. In this scenario, the operating system executes the user-supplied data as system commands with the privileges of the vulnerable application.
+
+This taxonomy documents the primary special characters and control sequences used in command injection payloads, their shell contexts (Linux `bash`/`sh` vs. Windows `cmd.exe`), and how they are interpreted. This is a critical reference for evaluating and training WAF models, as real-world HTTP traffic contains payloads targeting both backends.
+
+---
+
+## Command Injection Control Characters
+
+| Character | Shell Context | Effect | Minimal Example |
+| :--- | :--- | :--- | :--- |
+| `;` | `bash/sh` | **Command Separator:** Executes the second command immediately after the first completes, regardless of the exit status of the first command. (Has no separator effect in `cmd.exe`). | `cat file.txt; id` |
+| `\|` | `both` | **Pipe / Redirection:** Redirects the standard output (stdout) of the left-hand command to the standard input (stdin) of the right-hand command. Often used to chain arbitrary utilities. | `echo hello \| id` |
+| `&&` | `both` | **Conditional AND:** Executes the second command only if the first command completes successfully (exits with code `0`). | `ping -c 1 8.8.8.8 && id` *(Linux)*<br>`ping -n 1 8.8.8.8 && whoami` *(Windows)* |
+| `\|\|` | `both` | **Conditional OR:** Executes the second command only if the first command fails (exits with a non-zero code). | `false \|\| id` *(Linux)*<br>`dir non_existent_file \|\| whoami` *(Windows)* |
+| `` ` `` (backtick) | `bash/sh` | **Command Substitution:** Executes the command inside the backticks in a subshell and replaces the backtick expression with the command's standard output. (Does not work in `cmd.exe`). | `` echo `id` `` |
+| `$()` | `bash/sh` | **Command Substitution (Modern):** Executes the command inside the parentheses in a subshell and replaces the expression with the stdout. Supports nesting. (Does not work in `cmd.exe`). | `echo $(id)` |
+| `&` | `both` | **Asynchronous / Command Separator:**<br>• `bash/sh`: Backgrounds the first command (runs asynchronously) and runs the second command immediately.<br>• `cmd.exe`: Sequential separator. Operates identically to `;` in Linux, running the second command after the first completes. | `sleep 10 & id` *(Linux)*<br>`dir & whoami` *(Windows)* |
+| `\n` (newline) | `both` | **Line / Command Separator:** Breaks commands into separate lines. In CMI, it acts as a separator when the application processes inputs line-by-line or executes multi-line command strings directly in the shell. | `id\nwhoami` *(Linux)*<br>`dir\nwhoami` *(Windows)* |
+| `%0a` | `both` | **URL-encoded Line Feed:** When the web application URL-decodes user inputs prior to shell execution, `%0a` becomes a raw newline (`\n`), acting as a stealthy command separator that bypasses basic character blocklists. | `id%0awhoami` |
+| `%00` | `both` | **URL-encoded Null Byte:** String terminator in C/C++ and many backend languages (e.g., PHP, Perl, Python). Used in CMI to truncate trailing characters or file extensions appended by the application logic, ensuring the injected command is executed cleanly. | `id; %00` *(prevents trailing appended args from running)*<br>`cat /etc/passwd%00.txt` *(bypasses trailing extension checks)* |
+
+---
+
+## Contextual Differences & WAF Implications
+
+When analyzing command injection in a WAF context, understanding the backend shell environment is critical:
+
+### 1. Windows (`cmd.exe`) vs. Linux (`bash`/`sh`) Separators
+- **Semicolon (`;`)**: Frequently blocked by naive WAFs. While it is highly effective on Linux, it is ignored or causes syntax errors on Windows.
+- **Ampersand (`&`)**: On Windows `cmd.exe`, `&` acts as the primary command separator. On Linux, `&` backgrounds the first process, which might suppress stdout but still executes both commands.
+- **PowerShell**: If the Windows backend uses PowerShell instead of `cmd.exe`, standard Unix-like operators (like `;`) are supported, making PowerShell payloads syntactically closer to Linux payloads.
+
+### 2. Command Substitution
+- Backticks (`` ` ``) and `$()` are native to Unix shells.
+- In Windows `cmd.exe`, command execution inside strings is typically achieved using the `FOR /F` command or by using variable expansion (e.g., `cmd.exe /c "set CMD=whoami && %CMD%"`).
+
+### 3. Whitespace Bypass
+- If spaces are blocked or stripped by a filter, different shells support different whitespace substitutes:
+  - `bash/sh`: `${IFS}` (Internal Field Separator), `$IFS$9`, or brace expansion (e.g., `{cat,/etc/passwd}`).
+  - `cmd.exe`: `%ProgramFiles:~10,1%` (extracting spaces from environment variables) or using commas/semicolons between arguments (e.g., `ping,127.0.0.1`).
