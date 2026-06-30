@@ -2,7 +2,7 @@
 
 The pipeline is composed of seven sequential stages under `stages/`. Each stage is a numbered directory containing standalone Python scripts. Stages must be run in order; later stages depend on artefacts produced by earlier ones.
 
-Supported stages can push their outputs to HuggingFace Hub immediately after completing — see [docs/huggingface.md](huggingface.md).
+Supported stages can push their outputs to HuggingFace Hub immediately after completing — see the [Publish section of the User Guide](../USER_GUIDE.md#6-publish-optional).
 
 ---
 

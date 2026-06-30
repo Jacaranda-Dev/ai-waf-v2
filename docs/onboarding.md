@@ -1,1 +1,0 @@
-like student guide
