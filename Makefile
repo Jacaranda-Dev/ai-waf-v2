@@ -20,10 +20,10 @@ export $(shell sed 's/=.*//' .env)
         data_augment_synthesis data_augment_framing data_augment_benign \
         data_filter data_validate data_split data_augment_all \
         tokenize_a tokenize_b tokenize_eval \
-        train_a_large train_a_small train_b_99m \
-        distill_train distill_quant distill_export \
+        train_a_large train_a_small train_b_99m distill_track_b \
+        train_teacher distill_train distill_calibrate distill_canary distill_export \
         eval_detection eval_latency eval_adversarial eval_ablation eval_interp \
-        compare_all report \
+        compare_all report deploy_reco \
         ui clean
 
 # ─────────────────────────────────────────────
@@ -73,20 +73,21 @@ test:
 	@echo "=== Running Master Test Suite ==="
 	$(PYTHON) -m pytest tests/test_all.py
 
-# Logic and Architecture tests
+# All tests live in tests/test_all.py; sub-targets scope it with -k by class name.
+# Model architecture tests
 test_core:
-	@echo "=== Testing Model Architecture & Tokenizers ==="
-	$(PYTHON) -m pytest tests/test_model.py tests/test_tokenizer.py
+	@echo "=== Testing Model Architecture (encoder + classifier) ==="
+	$(PYTHON) -m pytest tests/test_all.py -k "WafEncoder or WafClassifier"
 
-# Data Integrity tests
+# Data pipeline tests
 test_data:
-	@echo "=== Testing Data Pipeline & Augmentation ==="
-	$(PYTHON) -m pytest tests/test_dataset.py tests/test_augmentation.py
+	@echo "=== Testing Data Schema & Collator ==="
+	$(PYTHON) -m pytest tests/test_all.py -k "HttpRecord or WafCollator"
 
 # Performance & Loss tests
 test_distill:
 	@echo "=== Testing Distillation Logic & Metrics ==="
-	$(PYTHON) -m pytest tests/test_distill_loss.py tests/test_metrics.py
+	$(PYTHON) -m pytest tests/test_all.py -k "DistillationLoss or Metrics"
 
 
 
@@ -194,50 +195,47 @@ tokenize: tokenize_a tokenize_b tokenize_eval
 # STAGE 5 — TEACHER MODEL TRAINING
 # ─────────────────────────────────────────────
 train_a_large:
-	@echo "=== Stage 4.1: Track A — DeBERTa-v3-base fine-tune ==="
-	$(PYTHON) stages/5_teacher_training/01_track_a_large.py             --config $(CFG) \
-	    --mlflow-run-name "track_a_large_$(shell date +%Y%m%d_%H%M)"
+	@echo "=== Stage 5.1: Track A — DeBERTa-v3-base fine-tune ==="
+	$(PYTHON) stages/5_teacher_training/01_track_a_large.py             --config $(CFG)
 
 train_a_small:
-	@echo "=== Stage 4.2: Track A — small pretrained fine-tune ==="
-	$(PYTHON) stages/5_teacher_training/02_track_a_small.py             --config $(CFG) \
-	    --mlflow-run-name "track_a_small_$(shell date +%Y%m%d_%H%M)"
+	@echo "=== Stage 5.2: Track A — small pretrained fine-tune ==="
+	$(PYTHON) stages/5_teacher_training/02_track_a_small.py             --config $(CFG)
 
 train_b_99m:
-	@echo "=== Stage 4.3-4.4: Track B — 99M encoder from scratch ==="
-	$(PYTHON) stages/5_teacher_training/03_track_b_99m.py               --config $(CFG) \
-	    --mlflow-run-name "track_b_99m_$(shell date +%Y%m%d_%H%M)"
-	$(PYTHON) stages/5_teacher_training/04_threshold_calibration.py     --config $(CFG) \
-	    --model-path models/track_b/best_99m.pt            \
-	    --target-fpr 0.001
+	@echo "=== Stage 5.3: Track B — 99M encoder from scratch ==="
+	$(PYTHON) stages/5_teacher_training/03_track_b_99m.py               --config $(CFG)
 
-train_b_99m_canary:
-	@echo "=== Stage 4.5: Synthetic Canary Eval (distribution shift check) ==="
-	$(PYTHON) stages/5_teacher_training/05_canary_eval.py               --config $(CFG) \
-	    --model-path models/track_b/best_99m.pt
+distill_track_b:
+	@echo "=== Stage 5.3b: Cross-track distillation (Track A teacher → Track B student) ==="
+	$(PYTHON) stages/5_teacher_training/03b_distill_track_b.py          --config $(CFG)
 
 # ─────────────────────────────────────────────
 # STAGE 6 — DISTILLATION & COMPRESSION
 # ─────────────────────────────────────────────
+train_teacher:
+	@echo "=== Stage 6.0: Train/resume 99M teacher (re-entry point) ==="
+	$(PYTHON) stages/6_distillation_and_compression/00_train_teacher_99m.py       --config $(CFG)
+
 distill_train:
 	@echo "=== Stage 6.1–6.2: Knowledge Distillation → student ==="
 	$(PYTHON) stages/6_distillation_and_compression/01_student_arch.py            --config $(CFG)
 	$(PYTHON) stages/6_distillation_and_compression/02_distill_train.py           --config $(CFG) \
-	    --teacher-path models/track_b/best_99m.pt          \
 	    --mlflow-run-name "student_distill_$(shell date +%Y%m%d_%H%M)"
 
-distill_quant:
-	@echo "=== Stage 6.3=6.4: QAT vs PTQ Comparison ==="
-	$(PYTHON) stages/6_distillation_and_compression/03_post_training_quant.py     --config $(CFG)
-	$(PYTHON) stages/6_distillation_and_compression/04_qat_comparison.py          --config $(CFG)
+distill_calibrate:
+	@echo "=== Stage 6.3: Post-training temperature calibration ==="
+	$(PYTHON) stages/6_distillation_and_compression/03_student_calibrate.py       --config $(CFG)
+
+distill_canary:
+	@echo "=== Stage 6.4: Student canary / memorisation check ==="
+	$(PYTHON) stages/6_distillation_and_compression/04_student_canary.py          --config $(CFG)
 
 distill_export:
-	@echo "=== Stage 6.5–6.7: ONNX + TensorRT Export ==="
-	$(PYTHON) stages/6_distillation_and_compression/05_export_onnx.py             --config $(CFG)
-	$(PYTHON) stages/6_distillation_and_compression/06_export_trt.py              --config $(CFG)
-	$(PYTHON) stages/6_distillation_and_compression/07_onnxruntime_bench.py       --config $(CFG)
+	@echo "=== Stage 6.5: ONNX + TorchScript export & latency bench ==="
+	$(PYTHON) stages/6_distillation_and_compression/05_export_and_bench.py        --config $(CFG)
 
-distill: distill_train distill_quant distill_export
+distill: distill_train distill_calibrate distill_canary distill_export
 
 # ─────────────────────────────────────────────
 # STAGE 7 — EVALUATION
@@ -292,6 +290,10 @@ report:
 	@echo "=== Final Report Generation ==="
 	$(PYTHON) stages/7_evaluation/15_generate_report.py            --config $(CFG)
 	@echo "Report written to reports/final_report.md"
+
+deploy_reco:
+	@echo "=== Stage 7.16: Deployment Recommendation ==="
+	$(PYTHON) stages/7_evaluation/16_deployment_recommendation.py  --config $(CFG)
 
 # ─────────────────────────────────────────────
 # CONVENIENCE TARGETS
