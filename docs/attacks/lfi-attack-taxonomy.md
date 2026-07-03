@@ -7,7 +7,7 @@ These user-supplied inputs can be:
 - Query parameters
 - Cookies
 - Headers
-- User-Agent header
+- PHP Wrappers
 - etc.
 
 Local File Inclusion (LFI) is similar to Remote File Inclusion (RFI), the main difference between them is where the malicious file can reside: remotely or only on the local/current server. LFI can be compared to Path Traversal (Directory Traversal), an HTTP attack that allows attackers to access restricted directories and execute commands outside of the web server’s root directory
@@ -115,7 +115,7 @@ zip:///filename_path#internal_filename
 
 **References:**
 
-* https://www.pivotpointsecurity.com/file-inclusion-vulnerabilities/
+* [Vulnerabilities and Defenses](https://www.pivotpointsecurity.com/file-inclusion-vulnerabilities/)
 * [Medium - Understanding Local File Inclusion (LFI): A Comprehensive Guide](https://medium.com/@subhash_pathak/understanding-local-file-inclusion-lfi-a-comprehensive-guide-eda3c20d5a7e))
 * [Directory Traversal Attacks](https://www.acunetix.com/websitesecurity/directory-traversal/)
 * [Payload](https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/File%20Inclusion/Intruders/Traversal.txt)
