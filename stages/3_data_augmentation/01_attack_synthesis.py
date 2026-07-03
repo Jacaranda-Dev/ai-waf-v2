@@ -7,7 +7,8 @@ Merges: 01_encoding_mutations, 02_tamper_scripts, 03–06_grammar_*, 07_local_ll
 
 Architecture:
   - Reads taxonomy_inventory.json → computes per-class gap → only generates what's needed
-  - Unified Generator registry: Mutator | Tamper | Grammar | LLM (all subclass BaseGenerator)
+  - Unified Generator registry: Mutator | Tamper | Grammar/PCFG | LLM (all subclass BaseGenerator)
+    (PcfgGenerator samples recursive grammars where defined, else falls back to flat templates)
   - Probabilistic mutation CHAINS: Grammar → Tamper → Encode (not one-shot)
   - Schema-validated output via HttpRecord Pydantic model before Parquet write
   - ThreadPoolExecutor for parallel class generation
@@ -34,6 +35,8 @@ from typing import Callable
 import pyarrow.parquet as pq
 from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
+from ai_waf_v2.augment.fillers import fill_placeholders, scrub_textbook_hosts
+from ai_waf_v2.augment.pcfg import PcfgSampler, load_pcfg_grammars
 from ai_waf_v2.data.schema import HttpRecord, records_to_table
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.llm import call_llm
@@ -41,6 +44,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -285,6 +289,29 @@ class GrammarGenerator(BaseGenerator):
         return payloads
 
 
+class PcfgGenerator(BaseGenerator):
+    """
+    Recursive-PCFG seed producer — a drop-in for the 'grammar' slot.
+
+    Grammars are loaded from config (``config/pcfg_grammars.yaml``). For any class
+    with a grammar it samples novel, structurally-nested payloads via PcfgSampler;
+    for every other class it transparently delegates to the flat GrammarGenerator
+    templates, which therefore remain the backup whenever no PCFG grammar is
+    present. Pass an empty ``registry`` to disable PCFG entirely.
+    """
+
+    def __init__(self, registry: dict | None = None):
+        self._flat    = GrammarGenerator()   # unchanged flat-template backup
+        self._sampler = PcfgSampler(registry or {}, fallback=self._flat.generate_payloads)
+
+    @property
+    def name(self) -> str:
+        return "grammar"                     # same name → Governor quota unchanged
+
+    def generate_payloads(self, attack_class: str, n: int, rng: random.Random) -> list[str]:
+        return self._sampler.generate(attack_class, n, rng)
+
+
 class EncoderGenerator(BaseGenerator):
     """Applies encoding mutations to payload strings (URL, hex, unicode, case, whitespace)."""
 
@@ -474,41 +501,17 @@ def _parse_payload_response(text: str) -> list[str]:
     return results
 
 
-# Realistic-looking hostnames used to replace textbook placeholders.
-# Drawn from plausible CDN, internal-service, and callback-server naming patterns.
-_REALISTIC_DOMAIN_POOL: list[str] = [
-    "cdn-assets.io",            "api-gateway.prod.net",     "metrics.infra.corp",
-    "storage.prod-east.net",    "webhook.integrations.io",  "auth.services.local",
-    "reporting.analytics.net",  "upload.media-server.net",  "proxy.internal.corp",
-    "payments-api.gateway.io",  "collector.telemetry.io",   "assets.frontend.net",
-    "queue.workers.io",         "logs.ops.internal",        "static.cdn-edge.net",
-    "api.notifications.net",    "sync.data-pipeline.io",    "cache.backend.local",
-    "export.reports.corp",      "ingest.events.io",         "fetch.microservice.net",
-    "relay.mail-server.net",    "tracker.monitoring.corp",  "broker.msg-bus.internal",
-]
-
-# Textbook placeholder strings the LLM tends to emit despite prompt instructions.
-_PLACEHOLDER_TERMS: list[str] = [
-    "evil.com", "evil.org",
-    "attacker.com", "attacker.org",
-    "malicious.com", "malicious.org",
-    "hacker.com", "hacker.org",
-    "example.com", "example.org",
-    "victim.com", "victim.org",
-    "bad.com", "bad.org",
-    "foo.com", "bar.com",
-    "hack.me", "target.com",
-]
-
-
 def _replace_placeholders(payload: str, rng: random.Random) -> str:
-    """Replace textbook placeholder hostnames with realistic-looking alternatives."""
-    result = payload
-    for term in _PLACEHOLDER_TERMS:
-        if term in result.lower():
-            replacement = rng.choice(_REALISTIC_DOMAIN_POOL)
-            result = re.sub(re.escape(term), replacement, result, flags=re.IGNORECASE)
-    return result
+    """
+    Scrub textbook placeholder hostnames (evil.com, example.com, …) from LLM output,
+    replacing them with high-cardinality hosts from the shared filler distribution.
+
+    LLM output does not contain §NAME§ placeholders, so it only needs this scrub;
+    grammar output uses placeholders and is handled by fill_placeholders() in the
+    Governor. Both draw from ai_waf_v2.augment.fillers, the same source benign
+    generation uses, so hostnames stay label-neutral.
+    """
+    return scrub_textbook_hosts(payload, rng)
 
 
 class LlmGenerator(BaseGenerator):
@@ -794,8 +797,12 @@ class AugmentationGovernor:
 
         final_payloads = []
         for seed, gen_name in raw_seeds[:n_needed]:
+            # Fill §NAME§ filler placeholders with high-cardinality, label-neutral
+            # values BEFORE obfuscation (the mutation chain would otherwise mangle
+            # the placeholder markers). No-op for seeds without placeholders.
+            filled = fill_placeholders(seed, self.rng)
             final_payloads.append((
-                _build_chain(seed, self.generators, self.chain_len, attack_class, self.rng,
+                _build_chain(filled, self.generators, self.chain_len, attack_class, self.rng,
                              self.double_encode_prob, self.double_obfuscate_prob),
                 gen_name,
             ))
@@ -905,14 +912,20 @@ def run(args: argparse.Namespace) -> None:
     llm_ratio             = getattr(aug_cfg, "llm_ratio",             0.50)
 
     splits_dir     = Path(cfg.paths.data_splits)
-    inventory_path = Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json"
+    inventory_path = report_path("taxonomy_inventory.json", cfg.paths.reports)
     out_dir        = Path(cfg.paths.data_augmented) / "synthesis"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Build generator pool
-    seeds      = _load_seed_payloads(splits_dir)
+    seeds         = _load_seed_payloads(splits_dir)
+    grammar_path  = getattr(aug_cfg, "pcfg_grammars_path", "config/pcfg_grammars.yaml")
+    pcfg_registry = load_pcfg_grammars(grammar_path)
+    if pcfg_registry:
+        log.info(f"PCFG grammars loaded from {grammar_path}: {sorted(pcfg_registry)}")
+    else:
+        log.info(f"No PCFG grammars at {grammar_path} — using flat grammar templates only")
     generators: list[BaseGenerator] = [
-        GrammarGenerator(),
+        PcfgGenerator(pcfg_registry),   # recursive PCFG where available; flat templates as fallback
         EncoderGenerator(seeds, enabled=aug_cfg.rules.encodings if hasattr(aug_cfg, "rules") else None),
         ObfuscatorGenerator(seeds),
     ]
@@ -999,7 +1012,7 @@ def run(args: argparse.Namespace) -> None:
     llm_provider = llm_cfg.provider if llm_gen else "none"
     llm_model    = llm_cfg.model    if llm_gen else "none"
 
-    stats_path = Path(cfg.paths.reports) / "metrics" / "augmentation_synthesis.json"
+    stats_path = report_path("augmentation_synthesis.json", cfg.paths.reports)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps({
         "target_per_class":      target,

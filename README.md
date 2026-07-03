@@ -67,8 +67,12 @@ See the [User Guide](docs/USER_GUIDE.md) for the full walkthrough.
 
 ## Documentation
 
+**📖 Start at the [documentation index](docs/README.md)** — every doc links back to
+it and to its neighbours.
+
 | Document | What it covers |
 |---|---|
+| [docs/README.md](docs/README.md) | Documentation index / navigation hub |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Setup → run the pipeline → read results; every command and env knob |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline DAG, core library design, data flow, config system |
 | [docs/API.md](docs/API.md) | `ai_waf_v2` library reference (public API) |

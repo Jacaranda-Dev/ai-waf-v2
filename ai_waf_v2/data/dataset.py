@@ -44,7 +44,7 @@ class WafDataset(Dataset):
     def __init__(
         self,
         parquet_path: str | Path,
-        tokenizer: "HFTokenizer",
+        tokenizer: HFTokenizer,
         seq_len: int = 256,
         label_col: str = "label",
         text_col: str = "raw",
@@ -117,7 +117,7 @@ class WafDatasetMmap(Dataset):
     def __init__(
         self,
         ipc_path: str | Path,
-        tokenizer: "HFTokenizer",
+        tokenizer: HFTokenizer,
         seq_len: int = 256,
         label_col: str = "label",
         text_col: str = "raw",

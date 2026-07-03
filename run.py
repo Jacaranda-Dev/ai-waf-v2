@@ -254,10 +254,14 @@ TASKS: dict[str, dict] = {
         "desc": "Stage 3.7: stratified split of augmented corpus",
         "steps": [stage(f"{S3}/07_stratified_split.py")],
     },
+    "data_leakage": {
+        "desc": "Stage 3.8: token-leakage probe (shortcut / filler-neutrality check)",
+        "steps": [stage(f"{S3}/08_token_leakage.py")],
+    },
     "data_augment_all": {
         "desc": "Stage 3: full augmentation pipeline",
         "deps": ["data_augment_synthesis", "data_augment_benign", "data_augment_framing",
-                 "data_filter", "data_validate", "data_split"],
+                 "data_filter", "data_validate", "data_split", "data_leakage"],
     },
 
     # ── stage 4 ──
@@ -393,8 +397,11 @@ TASKS: dict[str, dict] = {
                      "steps": [_rmtree_globs("models/track_a/*", "models/track_b/*", "models/student/*")]},
     "clean_tokenizers": {"desc": "Remove tokenizer artifacts",
                          "steps": [_rmtree_globs("tokenizers/track_a/*", "tokenizers/track_b/*")]},
-    "clean_reports": {"desc": "Remove report outputs",
-                      "steps": [_rmtree_globs("reports/metrics/*", "reports/figures/*", "reports/latency/*")]},
+    "clean_reports": {"desc": "Remove report outputs (keeps the .gitkeep skeleton)",
+                      "steps": [_rmtree_globs("reports/**/*.json", "reports/**/*.csv",
+                                              "reports/**/*.html", "reports/**/*.png",
+                                              "reports/**/*.svg", "reports/**/*.txt",
+                                              "reports/**/*.log")]},
     "clean_splits": {"desc": "Remove data splits", "steps": [_rmtree_globs("data/splits/*")]},
     "clean": {"desc": "Remove all generated artifacts",
               "deps": ["clean_augmented", "clean_models", "clean_tokenizers",

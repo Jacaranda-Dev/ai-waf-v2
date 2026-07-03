@@ -83,7 +83,7 @@ class WafClassifier(nn.Module):
         self.head    = head
 
     @classmethod
-    def from_config(cls, arch: "ModelArchConfig") -> "WafClassifier":
+    def from_config(cls, arch: ModelArchConfig) -> WafClassifier:
         """Instantiate from a ModelArchConfig (from pipeline.yaml)."""
         encoder = WafEncoder(
             vocab_size=arch.vocab_size,
@@ -176,9 +176,9 @@ class WafClassifier(nn.Module):
     def load(
         cls,
         path: str | Path,
-        arch: "ModelArchConfig",
+        arch: ModelArchConfig,
         map_location: str = "cpu",
-    ) -> "WafClassifier":
+    ) -> WafClassifier:
         model = cls.from_config(arch)
         state = torch.load(path, map_location=map_location, weights_only=True)
         model.load_state_dict(state)

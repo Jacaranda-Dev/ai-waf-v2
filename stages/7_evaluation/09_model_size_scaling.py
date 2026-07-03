@@ -21,6 +21,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -43,8 +44,7 @@ def model_size_scaling(cfg) -> dict:
         ("track_b_99m",Path(cfg.model.track_b_99m.output_dir)/"best_99m.pt",      cfg.model.track_b_99m,  False),
     ]
 
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    det_path    = reports_dir / "detection_results.json"
+    det_path    = report_path("detection_results.json", cfg.paths.reports)
     if not det_path.exists():
         return {"error": "detection_results.json not found — run Stage 6.1 first"}
 
@@ -69,7 +69,7 @@ def model_size_scaling(cfg) -> dict:
             log.info(f"  {label:20s}: params={n_params:,}  AUC-PR={auc_pr_str}")
 
     # Add baselines
-    baselines_path = reports_dir / "baselines.json"
+    baselines_path = report_path("baselines.json", cfg.paths.reports)
     if baselines_path.exists():
         baselines = json.loads(baselines_path.read_text())
         for name, data in baselines.items():
@@ -77,7 +77,7 @@ def model_size_scaling(cfg) -> dict:
             results[name] = {"n_params": "N/A", "auc_pr": m.get("auc_pr"), "f1": m.get("f1")}
 
     results["timings_s"] = timer.timings
-    out = reports_dir / "model_size_scaling.json"
+    out = report_path("model_size_scaling.json", cfg.paths.reports)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Model size scaling saved to {out}")
 
@@ -113,7 +113,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet":   "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "model_size_scaling.json",
+        report_path("model_size_scaling.json", cfg.paths.reports),
         args.force, "Stage 7.9 model size scaling"
     ):
         return

@@ -30,6 +30,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -43,7 +44,7 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "adversarial_summary.json",
+        report_path("adversarial_summary.json", cfg.paths.reports),
         args.force, "Stage 7.4 evasion payloads"
     ):
         return
@@ -66,8 +67,6 @@ def run(args: argparse.Namespace) -> None:
     records = [HttpRecord.from_dict(row) for row in table.to_pylist()]
     log.info(f"Loaded {len(records):,} malicious test records for adversarial eval")
 
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
     all_reports: dict[str, list] = {}
 
@@ -115,7 +114,7 @@ def run(args: argparse.Namespace) -> None:
                 f"{r.evasion_rate:>10.4f}"
             )
 
-        out_path = reports_dir / f"adversarial_{model_label}.json"
+        out_path = report_path("adversarial_summary.json", cfg.paths.reports).with_name(f"04_adversarial_{model_label}.json")
         AdversarialEvaluator.save_report(results, out_path)
         all_reports[model_label] = [
             {"tamper": r.tamper_name, "detection": r.detection_rate, "evasion": r.evasion_rate}
@@ -123,10 +122,10 @@ def run(args: argparse.Namespace) -> None:
         ]
 
     # Summary
-    (reports_dir / "adversarial_summary.json").write_text(
+    report_path("adversarial_summary.json", cfg.paths.reports).write_text(
         json.dumps({**all_reports, "timings_s": timer.timings}, indent=2)
     )
-    log.info(f"\nAdversarial summary saved to {reports_dir / 'adversarial_summary.json'}")
+    log.info(f"\nAdversarial summary saved to {report_path('adversarial_summary.json', cfg.paths.reports, mkdir=False)}")
 
     try:
         import mlflow
@@ -145,7 +144,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{model_label}_mean_detection"] = float(mean_det)
                     metrics[f"{model_label}_mean_evasion"]   = float(mean_eva)
             log_metrics_dict(metrics)
-            mlflow.log_artifact(str(reports_dir / "adversarial_summary.json"))
+            mlflow.log_artifact(str(report_path("adversarial_summary.json", cfg.paths.reports, mkdir=False)))
             timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)

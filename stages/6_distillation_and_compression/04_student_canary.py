@@ -40,6 +40,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -145,7 +146,7 @@ def run(args: argparse.Namespace) -> None:
         f"{student_cfg.output_dir}/best_student.pt": "run 02_distill_train.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "student_canary.json",
+        report_path("student_canary.json", cfg.paths.reports),
         args.force, "Stage 6.4 student canary evaluation"
     ):
         return
@@ -164,7 +165,7 @@ def run(args: argparse.Namespace) -> None:
     student.to(device).eval()
 
     # ── Threshold ─────────────────────────────────
-    threshold_path = Path(cfg.paths.reports) / "metrics" / "student_threshold.json"
+    threshold_path = report_path("student_threshold.json", cfg.paths.reports)
     if threshold_path.exists():
         thresh_data = json.loads(threshold_path.read_text())
         threshold   = thresh_data["calibrated_threshold"]
@@ -233,9 +234,7 @@ def run(args: argparse.Namespace) -> None:
     log.info("=" * 60)
 
     # ── Save report ───────────────────────────────
-    out_dir = Path(cfg.paths.reports) / "metrics"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "student_canary.json"
+    out_path = report_path("student_canary.json", cfg.paths.reports)
     out_path.write_text(json.dumps({
         "threshold":        threshold,
         "min_recall_slo":   min_recall,

@@ -26,18 +26,24 @@ from typing import Any
 import mlflow
 import pyarrow.parquet as pq
 import torch
+from checkpoint_utils import CheckpointTracker
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+from train_utils import (
+    WafClassifier,
+    WafCollator,
+    build_optimizer,
+    evaluate,
+    flatten_metrics,
+    run_epoch,
+)
 from transformers import AutoModel, AutoTokenizer
 
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
-from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.pipeline import check_output, require_inputs
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
-
-from checkpoint_utils import CheckpointTracker
-from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, flatten_metrics, run_epoch
 
 log = get_logger(__name__)
 

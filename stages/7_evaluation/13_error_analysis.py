@@ -13,6 +13,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 from torch.utils.data import DataLoader
 log = get_logger(__name__)
 def run(args):
@@ -21,7 +22,7 @@ def run(args):
         "data/splits/test.parquet": "make data_augment_all",
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "error_analysis.json",
+    if check_output(report_path("error_analysis.json", cfg.paths.reports),
                     args.force, "Stage 7.13 error analysis"):
         return
     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -68,7 +69,7 @@ def run(args):
         "worst_fp_examples": [{"text": get_text(i), "prob": round(p,4), "class": c} for i,p,c in fps_sorted],
         "worst_fn_examples": [{"text": get_text(i), "prob": round(p,4), "class": c} for i,p,c in fns_sorted],
     }
-    out = Path(cfg.paths.reports)/"metrics"/"error_analysis.json"
+    out = report_path("error_analysis.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Error analysis saved to {out}")

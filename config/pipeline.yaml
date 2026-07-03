@@ -124,6 +124,7 @@ augmentation:
 
   llm_ratio: 0.5                         # fraction of seed payloads from LLM (0.0 = grammar only, 1.0 = LLM only)
   benign_llm_ratio: 0.33                 # fraction of total benign records from LLM (0.0 = programmatic only, 1.0 = LLM only)
+  pcfg_grammars_path: "config/pcfg_grammars.yaml"  # recursive PCFG grammars; classes absent here use flat templates
 
   llm:
     provider:        "${LLM_PROVIDER}"   # anthropic | google | local | ollama
@@ -149,6 +150,7 @@ augmentation:
     min_token_length:       4
     max_token_length:       256
     label_consistency_check: true   # cross-check with ModSecurity CRS
+    class_validity_check:    true   # reject payloads that don't match their attack_class structure
 
 # ─── TOKENIZER ───────────────────────────────────────
 tokenizer:

@@ -1,8 +1,10 @@
 # Stage 2 — Baselines
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/2_baselines/`  
 **Make target:** `make baselines`  
-**Outputs:** `data/splits/`, `reports/metrics/`
+**Outputs:** `data/splits/`, `reports/2_baselines/metrics/`
 
 ---
 
@@ -26,7 +28,7 @@ Stage 3 re-runs the stratified split on the augmented corpus (`07_stratified_spl
 ### `00_stratified_split.py` — Initial stratified split
 
 **Inputs:** `data/normalized/deduped.parquet`  
-**Outputs:** `data/splits/{train,val,test,adversarial,canary}.parquet`, `reports/metrics/split_stats.json`
+**Outputs:** `data/splits/{train,val,test,adversarial,canary}.parquet`, `reports/2_baselines/metrics/00_split_stats.json`
 
 Produces five non-overlapping splits by stratifying on the composite key `label × attack_class`. This guarantees proportional representation of each attack type in every split, which is essential for per-class metrics in Stage 7 to be comparable across splits.
 
@@ -58,7 +60,7 @@ The script prefers `data/filtered/filtered.parquet` (output of Stage 3.4) if it 
 ### `01_define_slos.py` — SLO definition
 
 **Inputs:** `config/pipeline.yaml`  
-**Outputs:** `reports/metrics/slos.json`
+**Outputs:** `reports/2_baselines/metrics/01_slos.json`
 
 Reads SLO parameters from config and writes them to a standalone JSON file that every evaluation script loads. Centralizing SLOs here means changing a threshold in config automatically propagates to all baseline and Stage 7 evaluations without touching their code.
 
@@ -77,8 +79,8 @@ Primary metric: `auc_pr`. The FPR ceiling is the hard constraint; AUC-PR is the 
 
 ### `02_modsecurity_crs.py` — ModSecurity CRS baseline
 
-**Inputs:** `data/splits/test.parquet`, `reports/metrics/slos.json`  
-**Outputs:** `reports/metrics/modsecurity_results.json`, `reports/metrics/baselines.json`
+**Inputs:** `data/splits/test.parquet`, `reports/2_baselines/metrics/01_slos.json`  
+**Outputs:** `reports/2_baselines/metrics/02_modsecurity_results.json`, `reports/2_baselines/metrics/03_baselines.json`
 
 Implements OWASP CRS 3.3 as a compiled-regex anomaly scoring engine, without a real ModSecurity installation.
 
@@ -130,8 +132,8 @@ This establishes that signature-based approaches have a hard ceiling, motivating
 
 ### `03_classical_ml_baseline.py` — Classical ML baselines
 
-**Inputs:** `data/splits/{train,val,test}.parquet`, `reports/metrics/slos.json`  
-**Outputs:** `reports/metrics/baselines.json`
+**Inputs:** `data/splits/{train,val,test}.parquet`, `reports/2_baselines/metrics/01_slos.json`  
+**Outputs:** `reports/2_baselines/metrics/03_baselines.json`
 
 Three qualitatively distinct baselines that together establish the research narrative:
 
@@ -188,7 +190,7 @@ HTTP feature lift: ΔF1=+0.0312  ΔAUC-PR=+0.0481  ΔFPR=-0.00412
 | `--also-lgbm` | Add LightGBM run (appended to `baselines.json`) |
 | `--no-ablation` | Skip Baseline C (saves ~50% training time) |
 | `--split-dir DIR` | Override input directory (default: `cfg.paths.data_splits`) |
-| `--out-file FILE` | Output filename within `reports/metrics/` (default: `baselines.json`) |
+| `--out-file FILE` | Output filename within the Stage 2 reports folder (`reports/2_baselines/metrics/`) (default: `baselines.json`) |
 | `--phase {pre_aug,post_aug}` | Tag written into each result entry |
 
 The `--phase` flag is used by Stage 3 which re-runs the baselines on the augmented corpus with `--phase post_aug`, writing to the same `baselines.json`. Both entries coexist under different keys.
@@ -209,7 +211,7 @@ data/normalized/deduped.parquet
         ├──▶ data/splits/adversarial.parquet
         └──▶ data/splits/canary.parquet
                     │
-config/pipeline.yaml ──▶ 01_define_slos.py ──▶ reports/metrics/slos.json
+config/pipeline.yaml ──▶ 01_define_slos.py ──▶ reports/2_baselines/metrics/01_slos.json
                                                         │
 data/splits/test.parquet                                │
         │                                               │
@@ -274,13 +276,17 @@ python stages/2_baselines/03_classical_ml_baseline.py --no-ablation
 
 | Check | Where |
 |---|---|
-| Split sizes and class balance | `reports/metrics/split_stats.json` → per-split `imbalance_ratio` |
-| Fallback splits | `reports/metrics/split_stats.json` → `_meta.fallback_splits` (should be `[]`) |
-| SLO targets | `reports/metrics/slos.json` |
-| CRS recall vs FPR by paranoia level | `reports/metrics/baselines.json` → `modsecurity_crs_pl{1..4}.overall` |
-| CRS SLO verdicts | `reports/metrics/baselines.json` → `modsecurity_crs_pl1.slo_verdicts` |
-| XGBoost vs ablation lift | `reports/metrics/baselines.json` → compare `xgboost_hashed_ngram_http` vs `xgboost_hashed_ngram_ablation` |
-| Latency benchmark | `reports/metrics/baselines.json` → `latency.p99_ms` per model |
+| Split sizes and class balance | `reports/2_baselines/metrics/00_split_stats.json` → per-split `imbalance_ratio` |
+| Fallback splits | `reports/2_baselines/metrics/00_split_stats.json` → `_meta.fallback_splits` (should be `[]`) |
+| SLO targets | `reports/2_baselines/metrics/01_slos.json` |
+| CRS recall vs FPR by paranoia level | `reports/2_baselines/metrics/03_baselines.json` → `modsecurity_crs_pl{1..4}.overall` |
+| CRS SLO verdicts | `reports/2_baselines/metrics/03_baselines.json` → `modsecurity_crs_pl1.slo_verdicts` |
+| XGBoost vs ablation lift | `reports/2_baselines/metrics/03_baselines.json` → compare `xgboost_hashed_ngram_http` vs `xgboost_hashed_ngram_ablation` |
+| Latency benchmark | `reports/2_baselines/metrics/03_baselines.json` → `latency.p99_ms` per model |
 | MLflow | `make ui` → experiments `00_stratified_split`, `02_modsecurity_crs`, `03_classical_ml_baseline_pre_aug` |
 
 A stratification fallback on a non-canary split is worth investigating: it means some class has only one sample in the corpus and the split is not genuinely stratified for that class. Stage 3 augmentation targets exactly these gaps.
+
+---
+
+[◀ Stage 1 — Data Acquisition & Curation](stage1_data_acquisition.md) · [All Stages ▲](stages.md) · [Stage 3 — Data Augmentation ▶](stage3_data_augmentation.md)

@@ -190,7 +190,6 @@ def _call_ollama(
     base_url:    str,
     timeout:     int = 30,
 ) -> str | None:
-    import socket
     import urllib.error
     import urllib.request
 
@@ -232,7 +231,7 @@ def _call_ollama(
         else:
             log.warning(f"Ollama connection error: {e.reason}")
         return None
-    except (TimeoutError, socket.timeout):
+    except TimeoutError:
         log.warning(f"Ollama request timed out after {timeout}s (model={model!r}, max_tokens={max_tokens})")
         return None
     except json.JSONDecodeError as e:

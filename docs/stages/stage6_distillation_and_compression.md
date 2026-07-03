@@ -1,8 +1,10 @@
 # Stage 6 — Distillation & Compression
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/6_distillation_and_compression/`  
 **Make target:** `make distill_train`  
-**Outputs:** `models/student/best_student.pt`, `models/student/student.onnx`, `reports/latency/latency_summary.json`
+**Outputs:** `models/student/best_student.pt`, `models/student/student.onnx`, `reports/7_evaluation/latency/02_latency_summary.json`
 
 ---
 
@@ -32,11 +34,11 @@ Concretely: teacher and student share the Track B BPE vocabulary (8k tokens), so
 | Script | Purpose | Key output |
 |---|---|---|
 | `00_train_teacher_99m.py` | Ensure Track B 99M teacher checkpoint exists | `models/track_b/99m/best_99m.pt` |
-| `01_student_arch.py` | Pre-flight: validate dimensions, log compression ratio | `reports/metrics/student_arch.json` |
+| `01_student_arch.py` | Pre-flight: validate dimensions, log compression ratio | `reports/6_distillation_and_compression/metrics/01_student_arch.json` |
 | `02_distill_train.py` | Core KD training: 99M → 10M student with INT8 QAT | `models/student/best_student.pt` |
-| `03_student_calibrate.py` | Sweep thresholds on val set; find FPR-constrained optimum | `reports/metrics/student_threshold.json` |
-| `04_student_canary.py` | Regression gate: per-family recall on synthetic payloads | `reports/metrics/student_canary.json` |
-| `05_export_and_bench.py` | ONNX + TRT export; SLO-enforced latency benchmark | `reports/latency/latency_summary.json` |
+| `03_student_calibrate.py` | Sweep thresholds on val set; find FPR-constrained optimum | `reports/6_distillation_and_compression/metrics/03_student_threshold.json` |
+| `04_student_canary.py` | Regression gate: per-family recall on synthetic payloads | `reports/6_distillation_and_compression/metrics/04_student_canary.json` |
+| `05_export_and_bench.py` | ONNX + TRT export; SLO-enforced latency benchmark | `reports/7_evaluation/latency/02_latency_summary.json` |
 
 ---
 
@@ -216,10 +218,10 @@ Artifacts written:
 |---|---|
 | `models/student/student.onnx` | ONNX model, opset 17, dynamic axes |
 | `models/student/student.engine` | TensorRT FP16 engine (if TRT available) |
-| `reports/latency/latency_summary.json` | Unified p50/p95/p99/throughput across all providers |
-| `reports/latency/onnx_bench.json` | PyTorch + ORT-CUDA results |
-| `reports/latency/ort_detailed_bench.json` | Per-provider ORT breakdown |
-| `reports/latency/trt_bench.json` | TRT results (if engine built) |
+| `reports/7_evaluation/latency/02_latency_summary.json` | Unified p50/p95/p99/throughput across all providers |
+| `reports/6_distillation_and_compression/latency/05_onnx_bench.json` | PyTorch + ORT-CUDA results |
+| `reports/6_distillation_and_compression/latency/05_ort_detailed_bench.json` | Per-provider ORT breakdown |
+| `reports/6_distillation_and_compression/latency/05_trt_bench.json` | TRT results (if engine built) |
 
 ---
 
@@ -333,13 +335,13 @@ Stage 3 → data/splits/train.parquet, val.parquet
 Stage 4 → tokenizers/track_b/
 
   00_train_teacher_99m  →  models/track_b/99m/best_99m.pt
-  01_student_arch       →  reports/metrics/student_arch.json
+  01_student_arch       →  reports/6_distillation_and_compression/metrics/01_student_arch.json
   02_distill_train      →  models/student/best_student.pt
-  03_student_calibrate  →  reports/metrics/student_threshold.json
-  04_student_canary     →  reports/metrics/student_canary.json
+  03_student_calibrate  →  reports/6_distillation_and_compression/metrics/03_student_threshold.json
+  04_student_canary     →  reports/6_distillation_and_compression/metrics/04_student_canary.json
   05_export_and_bench   →  models/student/student.onnx
                            models/student/student.engine  (TRT, if available)
-                           reports/latency/latency_summary.json
+                           reports/7_evaluation/latency/02_latency_summary.json
 
 → Stage 7: all evaluation scripts load from models/student/
 ```
@@ -355,3 +357,7 @@ Stage 6 has three hard gates that stop the pipeline with `exit(1)`:
 3. **Latency SLO** (`05`): any non-skipped inference backend exceeding p99 or throughput targets → blocks deployment approval.
 
 All three results are written as JSON so CI/CD can read them independently of the exit code.
+
+---
+
+[◀ Stage 5 — Teacher Training](stage5_teacher_training.md) · [All Stages ▲](stages.md) · [Stage 7 — Evaluation ▶](stage7_evaluation.md)

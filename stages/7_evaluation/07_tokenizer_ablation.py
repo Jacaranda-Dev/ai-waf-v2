@@ -44,6 +44,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -227,8 +228,6 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
     import pyarrow.parquet as pq
 
     timer = StepTimer()
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
     val_path   = Path(cfg.paths.data_splits) / "val.parquet"
     train_path = Path(cfg.paths.data_splits) / "train.parquet"
@@ -343,7 +342,7 @@ def tokenizer_ablation(cfg, anchor_epochs: int = 5,
                 log.info(f"  {k}: A={va:.4f}  B={vb:.4f}  winner={'B' if vb < va else 'A'}")
 
     results["timings_s"] = timer.timings
-    out = reports_dir / "tokenizer_ablation.json"
+    out = report_path("tokenizer_ablation.json", cfg.paths.reports)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Tokenizer ablation saved to {out}")
 
@@ -394,7 +393,7 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json": "run 03_train_custom_bpe.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "tokenizer_ablation.json",
+        report_path("tokenizer_ablation.json", cfg.paths.reports),
         args.force, "Stage 7.7 tokenizer ablation"
     ):
         return
