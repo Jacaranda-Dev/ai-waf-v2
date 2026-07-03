@@ -26,6 +26,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path, report_dir
 
 log = get_logger(__name__)
 
@@ -143,7 +144,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/test.parquet": "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "attention_visualization.json",
+        report_path("attention_visualization.json", cfg.paths.reports),
         args.force, "Stage 7.11 attention visualization"
     ):
         return
@@ -222,13 +223,13 @@ def run(args: argparse.Namespace) -> None:
                     f"top token='{results[-1]['top5_attended'][0][0] if results[-1]['top5_attended'] else '?'}'"
                 )
 
-    out = Path(cfg.paths.reports) / "metrics" / "attention_visualization.json"
+    out = report_path("attention_visualization.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Attention visualization data saved to {out}")
 
     if not args.no_render:
-        _render_heatmaps(results, out.parent / "attention_heatmaps")
+        _render_heatmaps(results, report_dir("attention_heatmaps", cfg.paths.reports))
 
     try:
         import mlflow

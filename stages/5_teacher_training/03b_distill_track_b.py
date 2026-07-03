@@ -45,10 +45,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import math
+import warnings
 from pathlib import Path
 from typing import Any
-
-import warnings
 
 import mlflow
 import pyarrow.parquet as pq
@@ -62,16 +61,16 @@ from transformers import AutoModel, AutoTokenizer
 # Non-determinism is irrelevant since the teacher is frozen and produces no gradients.
 warnings.filterwarnings("ignore", message="Memory Efficient attention defaults")
 
+from checkpoint_utils import CheckpointTracker, load_checkpoint, resolve_checkpoint
+from track_b_model import TrackB99MModel
+from train_utils import WafClassifier, build_optimizer, evaluate, flatten_metrics
+
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
-from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.pipeline import require_inputs
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
-
-from checkpoint_utils import CheckpointTracker, load_checkpoint, resolve_checkpoint
-from track_b_model import TrackB99MModel
-from train_utils import WafClassifier, WafCollator, build_optimizer, evaluate, flatten_metrics
 
 log = get_logger(__name__)
 
@@ -290,7 +289,7 @@ def run_distill_epoch(
             nan_streak += 1
             if nan_streak >= 20:
                 raise RuntimeError(
-                    f"Distillation diverged: 20 consecutive non-finite losses. "
+                    "Distillation diverged: 20 consecutive non-finite losses. "
                     "Check LR, temperature, and data quality."
                 )
             optimizer.zero_grad()
@@ -476,8 +475,8 @@ def run(args: argparse.Namespace) -> None:
 
         # Need a val loader without teacher IDs for standard evaluate()
         def _make_student_only_loader() -> DataLoader:
-            from train_utils import WafCollator
             from torch.utils.data import DataLoader as DL
+            from train_utils import WafCollator
 
             class _BpeDs(Dataset):
                 def __init__(self) -> None:

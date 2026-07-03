@@ -51,6 +51,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -298,7 +299,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     # ── Canary gate guard ─────────────────────────
-    canary_report = Path(cfg.paths.reports) / "metrics" / "student_canary.json"
+    canary_report = report_path("student_canary.json", cfg.paths.reports)
     if canary_report.exists():
         canary_data = json.loads(canary_report.read_text())
         if not canary_data.get("slo_passed", False):
@@ -423,20 +424,18 @@ def run(args: argparse.Namespace) -> None:
             log.error(f"  BLOCKED by {c['provider']}: {c['violations']}")
 
     # ── 7. Save reports ───────────────────────────
-    report_dir = Path(cfg.paths.reports) / "latency"
-    report_dir.mkdir(parents=True, exist_ok=True)
 
     # Per-provider JSON (backward compat)
-    (report_dir / "onnx_bench.json").write_text(json.dumps({
+    (report_path("onnx_bench.json", cfg.paths.reports)).write_text(json.dumps({
         "pytorch":     pt_results,
         "onnxruntime": ort_cuda_results,
     }, indent=2))
-    (report_dir / "ort_detailed_bench.json").write_text(json.dumps({
+    (report_path("ort_detailed_bench.json", cfg.paths.reports)).write_text(json.dumps({
         "CUDAExecutionProvider": {"results": ort_cuda_results},
         "CPUExecutionProvider":  {"results": ort_cpu_results},
     }, indent=2))
     if trt_results:
-        (report_dir / "trt_bench.json").write_text(json.dumps({
+        (report_path("trt_bench.json", cfg.paths.reports)).write_text(json.dumps({
             "trt_engine":   str(trt_path),
             "results":      trt_results,
         }, indent=2))
@@ -458,7 +457,7 @@ def run(args: argparse.Namespace) -> None:
         },
         "timings_s": timer.timings,
     }
-    summary_path = report_dir / "latency_summary.json"
+    summary_path = report_path("latency_summary.json", cfg.paths.reports)
     summary_path.write_text(json.dumps(summary, indent=2))
     log.info(f"\nUnified latency summary saved to {summary_path}")
 

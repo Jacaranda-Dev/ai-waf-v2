@@ -26,6 +26,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -52,7 +53,7 @@ def run(args: argparse.Namespace) -> None:
 
     require_inputs({})
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "student_arch.json",
+        report_path("student_arch.json", cfg.paths.reports),
         args.force, "Stage 6.1 student arch check"
     ):
         return
@@ -134,7 +135,7 @@ def run(args: argparse.Namespace) -> None:
         "timings_s": timer.timings,
     }
 
-    out = Path(cfg.paths.reports) / "metrics" / "student_arch.json"
+    out = report_path("student_arch.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2))
     log.info(f"Student arch summary saved to {out}")

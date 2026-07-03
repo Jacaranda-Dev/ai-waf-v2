@@ -34,11 +34,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from datasketch import MinHash, MinHashLSH
 
+from ai_waf_v2.augment.validity import is_valid_for_class
 from ai_waf_v2.data.schema import HttpRecord, PARQUET_SCHEMA
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -157,6 +159,29 @@ class TokenizerCoverage:
         return FilterResult(True)
 
 
+class ClassValidity:
+    """
+    Stateless per-class structural validity check — safe for concurrent execution.
+
+    Rejects label=1 records whose payload no longer matches its declared
+    attack_class (e.g. a recursively-generated payload truncated to the length
+    cap, leaving unbalanced brackets or a severed keyword). Keeps attack_class
+    labels honest; delegates the actual checks to ai_waf_v2.augment.validity so
+    the same logic is unit-tested independently of this stage script.
+    """
+
+    def _payload_text(self, record: HttpRecord) -> str:
+        text = f"{record.query_string or ''} {record.body or ''}".strip()
+        return text or (record.raw or "")
+
+    def __call__(self, record: HttpRecord) -> FilterResult:
+        if record.label != 1:
+            return FilterResult(True)
+        if is_valid_for_class(record.attack_class, self._payload_text(record)):
+            return FilterResult(True)
+        return FilterResult(False, f"invalid_class:{record.attack_class}")
+
+
 class SemanticDedup:
     """
     Stateful MinHash LSH deduplicator.
@@ -262,12 +287,14 @@ class QualityPipeline:
         self,
         format_val:    FormatValidator,
         tok_coverage:  TokenizerCoverage | None,
+        validity:      ClassValidity | None,
         dedup:         SemanticDedup,
         label_check:   LabelConsistency,
         holdout_lsh:   MinHashLSH | None,
     ):
         self.format_val   = format_val
         self.tok_coverage = tok_coverage
+        self.validity     = validity
         self.dedup        = dedup
         self.label_check  = label_check
         self.holdout_lsh  = holdout_lsh
@@ -279,20 +306,18 @@ class QualityPipeline:
     ) -> tuple[list[HttpRecord], list[tuple[HttpRecord, str]], dict]:
         """
         Execute all passes.
-        Pass 1 (format) runs in parallel.
-        Pass 2 (tokenizer) runs in parallel.
-        Pass 3 (dedup) and Pass 4 (label) run single-threaded (stateful / policy).
+        Pass 1 (format), Pass 2 (tokenizer) and Pass 3 (class validity) run in parallel.
+        Pass 4 (dedup) and Pass 5 (label) run single-threaded (stateful / policy).
 
-        Returns (passed, rejected, pass4_stats) where pass4_stats breaks down
-        the two distinct flagged-but-kept categories from Pass 4.
+        Returns (passed, rejected, pass_stats) where pass_stats breaks down
+        the two distinct flagged-but-kept categories from the label pass.
         """
         passed:   list[HttpRecord]              = []
         rejected: list[tuple[HttpRecord, str]]  = []
 
         # ── Pass 1: format validation (parallel) ──
-        log.info(f"Pass 1/4 — HTTP format validation ({len(records):,} records)...")
+        log.info(f"Pass 1/5 — HTTP format validation ({len(records):,} records)...")
         after_fmt: list[HttpRecord] = []
-        fmt_results = {}
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(self.format_val, r): r for r in records}
             for fut in as_completed(futures):
@@ -305,7 +330,7 @@ class QualityPipeline:
         log.info(f"  ✓ {len(after_fmt):,}  ✗ {len(records) - len(after_fmt):,}")
 
         # ── Pass 2: tokenizer UNK rate (parallel) ──
-        log.info("Pass 2/4 — Tokenizer coverage check...")
+        log.info("Pass 2/5 — Tokenizer coverage check...")
         after_tok: list[HttpRecord] = []
         if self.tok_coverage:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -322,19 +347,37 @@ class QualityPipeline:
             log.info("  (skipped — tokenizer not available)")
         log.info(f"  ✓ {len(after_tok):,}  ✗ {len(after_fmt) - len(after_tok):,}")
 
-        # ── Pass 3: semantic dedup (sequential — stateful LSH) ──
-        log.info("Pass 3/4 — Semantic deduplication (MinHash LSH)...")
+        # ── Pass 3: per-class validity (parallel) ──
+        log.info("Pass 3/5 — Attack-class structural validity check...")
+        after_valid: list[HttpRecord] = []
+        if self.validity:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(self.validity, r): r for r in after_tok}
+                for fut in as_completed(futures):
+                    r   = futures[fut]
+                    res = fut.result()
+                    if res.passed:
+                        after_valid.append(r)
+                    else:
+                        rejected.append((r, res.reason))
+        else:
+            after_valid = after_tok
+            log.info("  (skipped — class validity check disabled)")
+        log.info(f"  ✓ {len(after_valid):,}  ✗ {len(after_tok) - len(after_valid):,}")
+
+        # ── Pass 4: semantic dedup (sequential — stateful LSH) ──
+        log.info("Pass 4/5 — Semantic deduplication (MinHash LSH)...")
         after_dedup: list[HttpRecord] = []
-        for r in after_tok:
+        for r in after_valid:
             res = self.dedup(r)
             if res.passed:
                 after_dedup.append(r)
             else:
                 rejected.append((r, res.reason))
-        log.info(f"  ✓ {len(after_dedup):,}  ✗ {len(after_tok) - len(after_dedup):,}")
+        log.info(f"  ✓ {len(after_dedup):,}  ✗ {len(after_valid) - len(after_dedup):,}")
 
-        # ── Pass 4: label consistency (sequential — policy) ──
-        log.info("Pass 4/4 — CRS-aligned label consistency check...")
+        # ── Pass 5: label consistency (sequential — policy) ──
+        log.info("Pass 5/5 — CRS-aligned label consistency check...")
         n_quarantined = n_flagged_evasive = n_flagged_edge = 0
         after_label: list[HttpRecord] = []
         for r in after_dedup:
@@ -455,9 +498,11 @@ def run(args: argparse.Namespace) -> None:
             holdout_lsh = _build_holdout_lsh(holdout_paths, threshold=0.70)
 
     # ── Build pipeline ────────────────────────────────────────────────────
+    validity_pass = ClassValidity() if getattr(filt_cfg, "class_validity_check", True) else None
     pipeline = QualityPipeline(
         format_val   = FormatValidator(),
         tok_coverage = tok_pass,
+        validity     = validity_pass,
         dedup        = SemanticDedup(threshold=cfg.data.dedup.semantic_threshold),
         label_check  = LabelConsistency(),
         holdout_lsh  = holdout_lsh,
@@ -555,7 +600,7 @@ def run(args: argparse.Namespace) -> None:
         "leakage_threshold": 0.70,
         "timings_s":         timer.timings,
     }
-    sp = Path(cfg.paths.reports) / "metrics" / "quality_gate.json"
+    sp = report_path("quality_gate.json", cfg.paths.reports)
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(stats, indent=2))
 

@@ -21,11 +21,11 @@ Usage
 from __future__ import annotations
 
 import json
-import re
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import torch
 
@@ -140,7 +140,7 @@ class AdversarialEvaluator:
 
     def __init__(
         self,
-        model:              "WafClassifier",
+        model:              WafClassifier,
         tokenizer:          object,
         device:             str  = "cuda",
         seq_len:            int  = 256,

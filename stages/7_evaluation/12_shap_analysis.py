@@ -9,6 +9,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 log = get_logger(__name__)
 def run(args):
     configure_root(); cfg = load_config(args.config)
@@ -16,7 +17,7 @@ def run(args):
         f"{cfg.model.student.output_dir}/best_student.pt": "run 02_distill_train.py",
         "data/splits/test.parquet": "make data_augment_all",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "shap_analysis.json",
+    if check_output(report_path("shap_analysis.json", cfg.paths.reports),
                     args.force, "Stage 7.12 SHAP analysis"):
         return
     try: import shap
@@ -70,7 +71,7 @@ def run(args):
                          "top5": [(toks[j] if j < len(toks) else "PAD", round(v,5)) for j,v in top5]})
         top_token = results[-1]["top5"][0] if results[-1]["top5"] else "?"
         log.info(f"  top token: {top_token}")
-    out = Path(cfg.paths.reports)/"metrics"/"shap_analysis.json"
+    out = report_path("shap_analysis.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"SHAP analysis saved to {out}")

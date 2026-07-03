@@ -1,8 +1,10 @@
 # Model Card — ai-waf-v2 student classifier
 
+> **📖 Docs:** [Index](README.md) · [User Guide](USER_GUIDE.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Stages](stages/stages.md) · [Model Card](MODEL_CARD.md) · [Repo README](../README.md)
+
 > Template following Mitchell et al., *Model Cards for Model Reporting* (2019).
 > Fields marked _(fill in)_ should be populated from the latest evaluation run
-> (`reports/eval_report.json`, `reports/comparison_table.md`) before publishing.
+> (`reports/7_evaluation/15_final_evaluation_report.json`, `reports/7_evaluation/metrics/14_master_comparison_table.csv`) before publishing.
 
 ## Model details
 
@@ -40,7 +42,7 @@ metrics, not just aggregates.
 - **Reported:** F1, precision, recall, FPR, FNR, AUC-ROC, AUC-PR — overall and
   per attack class (`ai_waf_v2/eval/metrics.py`).
 - **Latency SLOs:** p99 < 5 ms inline (batch 1), < 50 ms offline (batch 64).
-- **Latest results:** _(fill in from `reports/comparison_table.md`)_
+- **Latest results:** _(fill in from `reports/7_evaluation/metrics/14_master_comparison_table.csv`)_
 
 | Metric | Teacher 99M | Student ~10M | XGBoost baseline | ModSecurity CRS |
 |---|---|---|---|---|
@@ -53,9 +55,9 @@ metrics, not just aggregates.
 - **Sources:** public HTTP datasets (CSIC 2010, SR-BH 2020, ECML/PKDD 2007, plus
   any declared in `config/pipeline.yaml`), normalized to the `HttpRecord` schema
   and cross-dataset deduplicated.
-- **Augmentation:** grammar/mutator/tamper/LLM-synthesised attacks and benign
-  traffic, framed with PCAP-fitted request metadata; filtered by a four-pass
-  quality gate with a test/canary leakage guard.
+- **Augmentation:** recursive-PCFG/grammar/mutator/tamper/LLM-synthesised attacks
+  and benign traffic, framed with PCAP-fitted request metadata; filtered by a
+  five-pass quality gate with a test/canary leakage guard.
 - **Splits:** 70% train / 15% val / 10% test / 3% adversarial / 2% canary,
   stratified by `(label × attack_class)`. See the corpus datasheet at
   `reports/corpus_report.html`.

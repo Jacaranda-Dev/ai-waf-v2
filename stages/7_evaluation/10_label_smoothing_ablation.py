@@ -20,6 +20,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -76,7 +77,7 @@ def label_smoothing_ablation(cfg) -> dict:
             log.info(f"  eps={eps:.2f}: AUC-PR={m['auc_pr']:.4f}  F1={m['f1']:.4f}")
 
     results["timings_s"] = timer.timings
-    out = Path(cfg.paths.reports) / "metrics" / "label_smoothing_ablation.json"
+    out = report_path("label_smoothing_ablation.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Label smoothing ablation saved to {out}")
@@ -113,7 +114,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet":   "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "label_smoothing_ablation.json",
+        report_path("label_smoothing_ablation.json", cfg.paths.reports),
         args.force, "Stage 7.10 label smoothing ablation"
     ):
         return

@@ -21,6 +21,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from tokenizer_eval import check_token_shadowing, summarise_shadowing
@@ -97,7 +98,7 @@ def run(args: argparse.Namespace) -> None:
         "timings_s": timer.timings,
     }
 
-    out = Path(cfg.paths.reports) / "metrics" / "tokenizer_track_a.json"
+    out = report_path("tokenizer_track_a.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(stats, indent=2))
     log.info(f"Track A augmentation report saved to {out}")

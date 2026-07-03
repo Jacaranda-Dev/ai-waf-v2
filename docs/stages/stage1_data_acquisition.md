@@ -1,8 +1,10 @@
 # Stage 1 — Data Acquisition & Curation
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/1_data_acquisition_and_curation/`  
 **Make target:** `make data_collect`  
-**Outputs:** `data/normalized/`, `reports/metrics/`
+**Outputs:** `data/normalized/`, `reports/1_data_acquisition_and_curation/metrics/`
 
 ---
 
@@ -25,7 +27,7 @@ The three scripts run sequentially and are idempotent by default — each checks
 ### `01_acquire_and_normalize.py` — Download & normalize
 
 **Inputs:** remote dataset URLs (config), `config/pipeline.yaml`  
-**Outputs:** `data/normalized/{name}.parquet`, `data/normalized/all_datasets.parquet`, `reports/metrics/download_manifest.json`, `normalization_stats.json`, `collection_stats.json`
+**Outputs:** `data/normalized/{name}.parquet`, `data/normalized/all_datasets.parquet`, `reports/1_data_acquisition_and_curation/metrics/01_download_manifest.json`, `normalization_stats.json`, `collection_stats.json`
 
 #### Dataset specs
 
@@ -76,7 +78,7 @@ Kaggle-hosted datasets use `kagglehub` for download with an HTTP mirror fallback
 ### `02_cross_dataset_dedup.py` — Cross-dataset deduplication
 
 **Inputs:** `data/normalized/all_datasets.parquet`  
-**Outputs:** `data/normalized/deduped.parquet`, `reports/metrics/dedup_stats.json`, `data/normalized/dedup_samples.txt`
+**Outputs:** `data/normalized/deduped.parquet`, `reports/1_data_acquisition_and_curation/metrics/02_dedup_stats.json`, `data/normalized/dedup_samples.txt`
 
 Deduplication runs in two independent passes. It is a standalone stage (not merged into script 01) because MinHash LSH over millions of records is the most memory-intensive step in the curation pipeline; isolating it here lets the OS reclaim its working set before reporting starts.
 
@@ -111,7 +113,7 @@ Default Jaccard threshold: `0.85` (from `cfg.data.dedup.minhash_threshold`). Ove
 ### `03_generate_corpus_report.py` — Corpus health report
 
 **Inputs:** `data/normalized/deduped.parquet` (falls back to `all_datasets.parquet`)  
-**Outputs:** five JSON files in `reports/metrics/`
+**Outputs:** five JSON files in `reports/1_data_acquisition_and_curation/metrics/`
 
 This script consolidates five former scripts (`04_dataset_analysis.py`, `05_datasheet.py`, `06_taxonomy_coverage.py`, `07_length_distribution.py`, `08_taxonomy_inventory.py`) into a single invocation that reads the Parquet file exactly once.
 
@@ -169,11 +171,11 @@ python stages/1_data_acquisition_and_curation/03_generate_corpus_report.py \
                                 ▼
                 03_generate_corpus_report.py
                                 │
-                                ├──▶ reports/metrics/dataset_analysis.json
-                                ├──▶ reports/metrics/taxonomy_inventory.json  ← Stage 3 reads this
-                                ├──▶ reports/metrics/taxonomy_coverage.json
-                                ├──▶ reports/metrics/length_distribution.json
-                                └──▶ reports/metrics/datasheet.json
+                                ├──▶ reports/1_data_acquisition_and_curation/metrics/03_dataset_analysis.json
+                                ├──▶ reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json  ← Stage 3 reads this
+                                ├──▶ reports/1_data_acquisition_and_curation/metrics/03_taxonomy_coverage.json
+                                ├──▶ reports/1_data_acquisition_and_curation/metrics/03_length_distribution.json
+                                └──▶ reports/1_data_acquisition_and_curation/metrics/03_datasheet.json
 ```
 
 ---
@@ -236,13 +238,17 @@ python stages/1_data_acquisition_and_curation/03_generate_corpus_report.py \
 
 | Check | Where |
 |---|---|
-| Per-dataset record counts | `reports/metrics/dataset_analysis.json` → `source_counts` |
-| Dedup removal rate | `reports/metrics/dedup_stats.json` → `dedup_rate` |
+| Per-dataset record counts | `reports/1_data_acquisition_and_curation/metrics/03_dataset_analysis.json` → `source_counts` |
+| Dedup removal rate | `reports/1_data_acquisition_and_curation/metrics/02_dedup_stats.json` → `dedup_rate` |
 | Example near-duplicate pairs | `data/normalized/dedup_samples.txt` |
-| Missing attack classes | `reports/metrics/taxonomy_inventory.json` → `missing_classes` |
-| Low-count classes | `reports/metrics/taxonomy_inventory.json` → `low_count_classes` |
-| Truncation risk (pre-tokenization) | `reports/metrics/length_distribution.json` → `pct_requests_over_limit_approx` |
-| Class × source coverage | `reports/metrics/taxonomy_coverage.json` → `coverage_matrix` |
+| Missing attack classes | `reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json` → `missing_classes` |
+| Low-count classes | `reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json` → `low_count_classes` |
+| Truncation risk (pre-tokenization) | `reports/1_data_acquisition_and_curation/metrics/03_length_distribution.json` → `pct_requests_over_limit_approx` |
+| Class × source coverage | `reports/1_data_acquisition_and_curation/metrics/03_taxonomy_coverage.json` → `coverage_matrix` |
 | MLflow | `make ui` → experiments `01_acquire_and_normalize`, `02_cross_dataset_dedup`, `03_generate_corpus_report` |
 
 A high `pct_requests_over_limit_approx` (>10%) at this stage is a forward-looking warning for the tokenizer window in Stage 4. The actual truncation rate — measured on tokenized sequences — is reported there.
+
+---
+
+◀ _(first stage)_ · [All Stages ▲](stages.md) · [Stage 2 — Baselines ▶](stage2_baselines.md)

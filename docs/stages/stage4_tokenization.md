@@ -1,8 +1,10 @@
 # Stage 4 — Tokenization
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/4_tokenization/`  
 **Make targets:** `make tokenize_b` (Track B, primary path); Track A scripts run individually  
-**Outputs:** `tokenizers/track_a/`, `tokenizers/track_b/`, `reports/metrics/tokenizer_*.json`
+**Outputs:** `tokenizers/track_a/`, `tokenizers/track_b/`, `reports/4_tokenization/metrics/*.json`
 
 ---
 
@@ -53,7 +55,7 @@ Evaluation samples are drawn with `stratified_sample()` — equal representation
 ### `01_augment_pretrained_vocab.py` — Track A setup
 
 **Inputs:** `data/splits/train.parquet`, `config/pipeline.yaml` (`tokenizer.track_a`)  
-**Outputs:** `tokenizers/track_a/` (full HuggingFace tokenizer), `reports/metrics/tokenizer_track_a.json`
+**Outputs:** `tokenizers/track_a/` (full HuggingFace tokenizer), `reports/4_tokenization/metrics/01_tokenizer_track_a.json`
 
 Calls `augment_pretrained_vocab()` from `ai_waf_v2.tokenizer.vocab_utils`, which:
 1. Loads BERT-base-uncased via HuggingFace `AutoTokenizer`
@@ -76,7 +78,7 @@ The shadowing summary is written into `tokenizer_track_a.json` and surfaced agai
 ### `02_measure_oov_track_a.py` — Track A evaluation
 
 **Inputs:** `tokenizers/track_a/`, `data/splits/val.parquet`  
-**Outputs:** `reports/metrics/tokenizer_oov_track_a.json`
+**Outputs:** `reports/4_tokenization/metrics/02_tokenizer_oov_track_a.json`
 
 Loads the augmented tokenizer and computes the full metric schema on a stratified 5 000-sample draw from the validation split. Results are written to the canonical Track A metrics file that script 05 reads.
 
@@ -115,7 +117,7 @@ Evaluation is **not** performed here; it is deferred to script 04, which is the 
 ### `04_measure_oov_track_b.py` — Track B evaluation
 
 **Inputs:** `tokenizers/track_b/`, `data/splits/val.parquet`  
-**Outputs:** `reports/metrics/tokenizer_oov_track_b.json`
+**Outputs:** `reports/4_tokenization/metrics/04_tokenizer_oov_track_b.json`
 
 Mirrors script 02 exactly but for Track B. Loads `HttpTokenizer` (custom BPE), draws a stratified 5 000-sample val split, runs `compute_full_metrics()`. This file is the one script 05 reads — not the stats file script 03 used to write.
 
@@ -124,7 +126,7 @@ Mirrors script 02 exactly but for Track B. Loads `HttpTokenizer` (custom BPE), d
 ### `05_compare_tokenizers.py` — side-by-side comparison
 
 **Inputs:** `tokenizers/track_a/`, `tokenizers/track_b/`, cached metrics from scripts 02 & 04  
-**Outputs:** `reports/metrics/tokenizer_comparison.json`
+**Outputs:** `reports/4_tokenization/metrics/05_tokenizer_comparison.json`
 
 **Cache-first evaluation:** if both `tokenizer_oov_track_a.json` and `tokenizer_oov_track_b.json` exist, their pre-computed metrics are used directly. Pass `--recompute` to force a live re-evaluation on a fresh stratified sample (3 000 samples).
 
@@ -232,10 +234,14 @@ All scripts must be run from the repo root (or any directory) — `sys.path` is 
 
 | Check | Where |
 |---|---|
-| Shadowed tokens | `reports/metrics/tokenizer_track_a.json` → `shadowing.summary.shadowed_tokens` |
+| Shadowed tokens | `reports/4_tokenization/metrics/01_tokenizer_track_a.json` → `shadowing.summary.shadowed_tokens` |
 | Per-class OOV for each track | `tokenizer_oov_track_a.json` / `tokenizer_oov_track_b.json` → `per_class` |
 | Truncation rate | Both OOV reports → `truncation_rate`; warn if > 0.10 |
 | Comparison recommendation | `tokenizer_comparison.json` → `recommendation` |
 | MLflow | `make ui` → experiments `02_measure_oov_track_a`, `04_measure_oov_track_b`, `05_compare_tokenizers` |
 
 A truncation rate above 10 % at `seq_len=256` means a meaningful fraction of requests are being silently clipped. Options: increase `seq_len` (memory cost quadratic with attention), reduce fertility by adjusting the BPE vocab size, or accept the loss and document it.
+
+---
+
+[◀ Stage 3 — Data Augmentation](stage3_data_augmentation.md) · [All Stages ▲](stages.md) · [Stage 5 — Teacher Training ▶](stage5_teacher_training.md)

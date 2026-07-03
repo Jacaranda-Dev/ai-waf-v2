@@ -43,6 +43,7 @@ from ai_waf_v2.utils.config import load_config, ModelArchConfig, StudentModelCon
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -270,15 +271,13 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "detection_results.json",
+        report_path("detection_results.json", cfg.paths.reports),
         args.force, "Stage 7.1 detection metrics"
     ):
         return
 
     device      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     splits_dir  = cfg.paths.data_splits
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
     timer = StepTimer()
 
     tokenizer = HttpTokenizer.load(
@@ -329,7 +328,7 @@ def run(args: argparse.Namespace) -> None:
     _log_result("student", results["student"])
 
     # ── Baselines ─────────────────────────────────────────────────────────────
-    baseline_path = reports_dir / "baselines.json"
+    baseline_path = report_path("baselines.json", cfg.paths.reports)
     if baseline_path.exists():
         baselines = json.loads(baseline_path.read_text())
         for name, data in baselines.items():
@@ -354,10 +353,10 @@ def run(args: argparse.Namespace) -> None:
                 f"clusters={len(fp.get('kmeans_clusters', []))}"
             )
 
-    (reports_dir / "detection_results.json").write_text(
+    (report_path("detection_results.json", cfg.paths.reports)).write_text(
         json.dumps(results, indent=2, default=str)
     )
-    log.info(f"\nFull results saved to {reports_dir / 'detection_results.json'}")
+    log.info(f"\nFull results saved to {report_path("detection_results.json", cfg.paths.reports)}")
 
     try:
         import mlflow
@@ -383,7 +382,7 @@ def run(args: argparse.Namespace) -> None:
                 if fp:
                     metrics[f"{prefix}_total_fp"] = float(fp.get("total_fp", 0))
             log_metrics_dict(metrics)
-            mlflow.log_artifact(str(reports_dir / "detection_results.json"))
+            mlflow.log_artifact(str(report_path("detection_results.json", cfg.paths.reports)))
             timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)
