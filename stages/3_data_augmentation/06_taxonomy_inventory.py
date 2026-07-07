@@ -29,6 +29,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -98,7 +99,7 @@ def run(args: argparse.Namespace) -> None:
         "data/normalized/deduped.parquet": "make data_collect",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json",
+        report_path("taxonomy_inventory.json", cfg.paths.reports),
         args.force, "Stage 3.6 taxonomy inventory"
     ):
         return
@@ -228,7 +229,7 @@ def run(args: argparse.Namespace) -> None:
         "timings_s": timer.timings,
     }
 
-    out = Path(cfg.paths.reports) / "metrics" / "taxonomy_inventory.json"
+    out = report_path("taxonomy_inventory.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2))
     log.info(f"\nInventory + distribution shift report saved → {out}")

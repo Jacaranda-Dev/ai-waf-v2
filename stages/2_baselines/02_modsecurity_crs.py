@@ -59,6 +59,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -237,8 +238,8 @@ def score_request(
 # SLO audit helper
 # ─────────────────────────────────────────────────────────
 
-def _load_slos(reports_dir: Path) -> dict | None:
-    slo_path = reports_dir / "slos.json"
+def _load_slos(reports_root: str) -> dict | None:
+    slo_path = report_path("slos.json", reports_root, mkdir=False)
     if not slo_path.exists():
         log.warning("slos.json not found — SLO audit skipped (run 01_define_slos.py first)")
         return None
@@ -295,12 +296,10 @@ def run(args: argparse.Namespace) -> None:
     require_inputs({
         "data/splits/test.parquet": "make baselines",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "modsecurity_results.json", args.force, "Stage 2.2 ModSecurity CRS"):
+    if check_output(report_path("modsecurity_results.json", cfg.paths.reports), args.force, "Stage 2.2 ModSecurity CRS"):
         return
 
     splits_dir  = Path(cfg.paths.data_splits)
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
     test_path = splits_dir / "test.parquet"
     if not test_path.exists():
@@ -314,7 +313,7 @@ def run(args: argparse.Namespace) -> None:
     log.info(f"Loaded {len(raws):,} test samples")
     timer     = StepTimer()
 
-    slos      = _load_slos(reports_dir)
+    slos      = _load_slos(cfg.paths.reports)
     threshold = args.threshold or getattr(getattr(cfg, "slo", None), "crs_anomaly_threshold", 5)
 
     # Determine which PL(s) to evaluate
@@ -323,7 +322,7 @@ def run(args: argparse.Namespace) -> None:
         else [1, 2, 3, 4]
     )
 
-    baselines_path = reports_dir / "baselines.json"
+    baselines_path = report_path("baselines.json", cfg.paths.reports)
     existing = json.loads(baselines_path.read_text()) if baselines_path.exists() else {}
 
     log.info(f"\nAnomaly score threshold: {threshold}")

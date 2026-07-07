@@ -10,6 +10,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 log = get_logger(__name__)
 def run(args):
     configure_root(); cfg = load_config(args.config)
@@ -17,7 +18,7 @@ def run(args):
         "data/splits/test.parquet": "make data_augment_all",
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "obfuscation_robustness.json",
+    if check_output(report_path("obfuscation_robustness.json", cfg.paths.reports),
                     args.force, "Stage 7.5 obfuscation robustness"):
         return
     device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -57,7 +58,7 @@ def run(args):
                                       "detection_rate": round(m["recall"],4),
                                       "evasion_rate": round(1-m["recall"],4)})
             log.info(f"  {t1_name}+{t2_name}: detection={m['recall']:.4f}")
-    out = Path(cfg.paths.reports)/"metrics"/"obfuscation_robustness.json"
+    out = report_path("obfuscation_robustness.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"results": chained_results, "timings_s": timer.timings}, indent=2))
     log.info(f"Obfuscation robustness saved to {out}")

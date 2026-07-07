@@ -34,6 +34,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -204,14 +205,14 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "latency" / "latency_summary.json",
+        report_path("latency_summary.json", cfg.paths.reports),
         args.force, "Stage 7.2 latency benchmark"
     ):
         return
 
     batch_sizes = args.batch_sizes or cfg.evaluation.batch_sizes
     devices     = args.devices    or cfg.evaluation.devices
-    report_dir  = Path(cfg.paths.reports) / "latency"
+    report_dir  = report_path("latency_summary.json", cfg.paths.reports).parent  # 7_evaluation/latency (dynamic per-model files)
     report_dir.mkdir(parents=True, exist_ok=True)
 
     seq_len    = cfg.tokenizer.seq_len
@@ -339,8 +340,8 @@ def run(args: argparse.Namespace) -> None:
         },
         "timings_s": timer.timings,
     }
-    (report_dir / "latency_summary.json").write_text(json.dumps(report, indent=2))
-    log.info(f"\nLatency report saved to {report_dir / 'latency_summary.json'}")
+    (report_path("latency_summary.json", cfg.paths.reports)).write_text(json.dumps(report, indent=2))
+    log.info(f"\nLatency report saved to {report_path("latency_summary.json", cfg.paths.reports)}")
 
     try:
         import mlflow
@@ -367,7 +368,7 @@ def run(args: argparse.Namespace) -> None:
                     metrics[f"{model_key}_slo_p99_ok"]  = float(slo.get("p99_ok", False))
                     metrics[f"{model_key}_slo_rps_ok"]  = float(slo.get("rps_ok", False))
             log_metrics_dict(metrics)
-            mlflow.log_artifact(str(report_dir / "latency_summary.json"))
+            mlflow.log_artifact(str(report_path("latency_summary.json", cfg.paths.reports)))
             timer.log_mlflow()
     except Exception as exc:
         log.warning(f"MLflow logging skipped: {exc}", exc_info=True)

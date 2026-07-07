@@ -29,6 +29,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from tokenizer_eval import (
@@ -115,15 +116,13 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.tokenizer.track_b.output_dir}/tokenizer.json":        "run 03_train_custom_bpe.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "tokenizer_comparison.json",
+        report_path("tokenizer_comparison.json", cfg.paths.reports),
         args.force, "Stage 4.5 tokenizer comparison"
     ):
         return
 
     track_a_dir  = Path(cfg.tokenizer.track_a.output_dir)
     track_b_dir  = Path(cfg.tokenizer.track_b.output_dir)
-    reports_dir  = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Guard: both tokenizers must exist
@@ -149,8 +148,8 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Attempt to load pre-computed metric caches
     # ------------------------------------------------------------------
-    cached_a = _load_cached(reports_dir / "tokenizer_oov_track_a.json")
-    cached_b = _load_cached(reports_dir / "tokenizer_oov_track_b.json")
+    cached_a = _load_cached(report_path("tokenizer_oov_track_a.json", cfg.paths.reports))
+    cached_b = _load_cached(report_path("tokenizer_oov_track_b.json", cfg.paths.reports))
 
     if cached_a and cached_b and not args.recompute:
         log.info(
@@ -198,7 +197,7 @@ def run(args: argparse.Namespace) -> None:
         comparison = build_comparison_report(metrics_a, metrics_b)
 
     # Attach shadowing summary from script 01 if available
-    shadow_path = reports_dir / "tokenizer_track_a.json"
+    shadow_path = report_path("tokenizer_track_a.json", cfg.paths.reports)
     if shadow_path.exists():
         try:
             shadow_data = json.loads(shadow_path.read_text())
@@ -212,7 +211,7 @@ def run(args: argparse.Namespace) -> None:
     # Persist
     # ------------------------------------------------------------------
     comparison["timings_s"] = timer.timings
-    out = reports_dir / "tokenizer_comparison.json"
+    out = report_path("tokenizer_comparison.json", cfg.paths.reports)
     out.write_text(json.dumps(comparison, indent=2))
     log.info(f"Full comparison report saved to {out}")
 

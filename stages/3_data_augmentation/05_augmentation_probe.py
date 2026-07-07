@@ -38,6 +38,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -238,7 +239,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet":   "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "augmentation_probe.json",
+        report_path("augmentation_probe.json", cfg.paths.reports),
         args.force, "Stage 3.5 augmentation probe"
     ):
         return
@@ -300,7 +301,7 @@ def run(args: argparse.Namespace) -> None:
         "stop_signals":     [cls for cls, s in saturation.items() if s["stop_augmentation"]],
         "timings_s":        timer.timings,
     }
-    out = Path(cfg.paths.reports) / "metrics" / "augmentation_probe.json"
+    out = report_path("augmentation_probe.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Probe results written → {out}")

@@ -33,12 +33,14 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from rich.progress import Progress, SpinnerColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn, MofNCompleteColumn
 
+from ai_waf_v2.augment.fillers import rand_host, rand_path, rand_word
 from ai_waf_v2.data.schema import HttpRecord, records_to_table
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.llm import call_llm
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -577,12 +579,42 @@ _PARAM_VALUE_MAP = {
 }
 
 
+# ── Shared-filler benign values ───────────────────────────────────────────────
+# URL- and path-bearing params are exactly where SSRF / LFI / header-injection
+# attacks put their hostnames and paths. Drawing the *benign* values for those
+# same params from ai_waf_v2.augment.fillers — the identical generators the attack
+# grammars use — makes a hostname or path label-neutral, so the model can't learn
+# "random-looking host ⇒ malicious" as a shortcut. (Previously these used a handful
+# of fixed example.com/example.org hosts, which leaked host cardinality as a label.)
+
+def _benign_url(rng: random.Random) -> str:
+    scheme = rng.choice(("https://", "https://", "http://"))
+    tail   = rand_path(rng) if rng.random() < 0.7 else ""
+    return f"{scheme}{rand_host(rng)}{tail}"
+
+
+def _benign_path(rng: random.Random) -> str:
+    return rand_path(rng)
+
+
+_URL_PARAMS  = ["url", "uri", "href", "src", "source", "redirect", "redirect_uri",
+                "next", "dest", "destination", "callback", "webhook", "webhook_url",
+                "proxy", "fetch", "target", "return", "returnUrl", "return_url",
+                "location", "request"]
+_PATH_PARAMS = ["path", "file", "filepath", "filename", "doc", "document",
+                "resource", "load"]
+_PARAM_VALUE_MAP.update({p: _benign_url for p in _URL_PARAMS})
+_PARAM_VALUE_MAP.update({p: _benign_path for p in _PATH_PARAMS})
+
+
 def _innocent_value(param: str, rng: random.Random) -> str:
     fn = _PARAM_VALUE_MAP.get(param)
     if fn:
         return fn(rng)
-    # Generic fallback: sample a plausible HTTP param value across common types
-    kind = rng.choice(["int", "float", "bool", "uuid", "slug", "date", "short_id", "empty"])
+    # Generic fallback: sample a plausible HTTP param value across common types,
+    # including shared-filler host/path/word so unmapped params also share vocab.
+    kind = rng.choice(["int", "float", "bool", "uuid", "slug", "date", "short_id",
+                       "host", "path", "word", "empty"])
     if kind == "int":       return str(rng.randint(0, 99999))
     if kind == "float":     return str(round(rng.uniform(0.1, 9999.9), 2))
     if kind == "bool":      return rng.choice(["true", "false", "1", "0"])
@@ -591,6 +623,9 @@ def _innocent_value(param: str, rng: random.Random) -> str:
                                                "best-value", "staff-pick", "limited-edition"])
     if kind == "date":      return rng.choice(_DATE_RANGE_PAIRS)[0]
     if kind == "short_id":  return uuid.uuid4().hex[:8]
+    if kind == "host":      return _benign_url(rng)
+    if kind == "path":      return _benign_path(rng)
+    if kind == "word":      return rand_word(rng)
     return ""  # empty
 
 
@@ -1302,7 +1337,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     # Load PCAP-fitted distributions from Module B if available
-    dist_profile = Path(cfg.paths.reports) / "metrics" / "traffic_distribution.json"
+    dist_profile = report_path("traffic_distribution.json", cfg.paths.reports)
     if dist_profile.exists():
         try:
             DIST.configure(json.loads(dist_profile.read_text()))
@@ -1388,7 +1423,7 @@ def run(args: argparse.Namespace) -> None:
         f"  attack={n_attack:,}  benign={n_benign:,}"
     )
 
-    stats_path = Path(cfg.paths.reports) / "metrics" / "request_framing.json"
+    stats_path = report_path("request_framing.json", cfg.paths.reports)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps({
         "n_attack_reframed":  len(attack_records),

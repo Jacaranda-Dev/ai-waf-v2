@@ -7,6 +7,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 log = get_logger(__name__)
 def _gpu_mem_mb(model, device):
     if device.type != "cuda": return None
@@ -23,7 +24,7 @@ def run(args):
     require_inputs({
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "memory_footprint.json",
+    if check_output(report_path("memory_footprint.json", cfg.paths.reports),
                     args.force, "Stage 7.3 memory footprint"):
         return
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -57,7 +58,7 @@ def run(args):
     if onnx_path.exists():
         results["student_onnx"] = {"disk_mb": round(onnx_path.stat().st_size/1e6,1)}
         log.info(f"  {'student_onnx':20s}: disk={results['student_onnx']['disk_mb']}MB")
-    out = Path(cfg.paths.reports)/"metrics"/"memory_footprint.json"
+    out = report_path("memory_footprint.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2))
     log.info(f"Memory footprint saved to {out}")

@@ -1,5 +1,7 @@
 # Pipeline Stages Reference
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 The pipeline is composed of seven sequential stages under `stages/`. Each stage is a numbered directory containing standalone Python scripts. Stages must be run in order; later stages depend on artefacts produced by earlier ones.
 
 Supported stages can push their outputs to HuggingFace Hub immediately after completing — see the [Publish section of the User Guide](../USER_GUIDE.md#6-publish-optional).
@@ -16,7 +18,7 @@ At startup each script verifies that its required inputs exist. If a prerequisit
 
 ```
 ERROR  Required input missing: data/normalized/deduped.parquet  →  run: make data_collect
-ERROR  Required input missing: reports/metrics/taxonomy_inventory.json  →  run: make data_analyze
+ERROR  Required input missing: reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json  →  run: make data_analyze
 ```
 
 ### Skip-if-done guards
@@ -70,7 +72,7 @@ The full prerequisite chain is:
 ```
 01_acquire_and_normalize  →  data/normalized/all_datasets.parquet
 02_cross_dataset_dedup    →  data/normalized/deduped.parquet
-03_generate_corpus_report →  reports/metrics/taxonomy_inventory.json
+03_generate_corpus_report →  reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json
                              reports/corpus_report.json
 00_stratified_split       →  data/splits/{train,val,test,adversarial,canary}.parquet
 01_attack_synthesis       →  data/augmented/synthesis/synthesized_attacks.parquet
@@ -198,7 +200,8 @@ Unified attack payload generation orchestrated by `AugmentationGovernor`:
 
 | Generator | Mechanism |
 |---|---|
-| `GrammarGenerator` | Context-free templates for SQLi, XSS, LFI, SSRF, CMDi with prefixes / payloads / suffixes / params / endpoints |
+| `PcfgGenerator` | Recursive PCFG grammars (`config/pcfg_grammars.yaml`) for structurally-nested payloads; falls back to `GrammarGenerator` templates for classes without a grammar |
+| `GrammarGenerator` | Flat context-free templates for SQLi, XSS, LFI, SSRF, CMDi with prefixes / payloads / suffixes / params / endpoints |
 | `MutatorGenerator` | 8 encoding transforms applied to existing payloads |
 | `TamperGenerator` | 7 SQLMap-style tamper rules (comment injection, casing, URL/hex/base64/unicode encoding) |
 | `LocalLLMGenerator` | Local LLM via Ollama API for out-of-grammar payloads |
@@ -224,14 +227,15 @@ Aligns the benign generator's metadata distributions with real traffic:
 
 #### `04_quality_gate.py`
 
-Four-pass filtering pipeline applied to all synthetic samples:
+Five-pass filtering pipeline applied to all synthetic samples:
 
 | Pass | Mode | Check |
 |---|---|---|
 | 1 | Parallel | HTTP format validation: method allowlist, length bounds |
 | 2 | Parallel | Tokenizer UNK-rate: reject samples above threshold |
-| 3 | Sequential | Semantic dedup via MinHash LSH |
-| 4 | Sequential | CRS-aligned label consistency check |
+| 3 | Parallel | Per-class structural validity: reject payloads that don't match their `attack_class` |
+| 4 | Sequential | Semantic dedup via MinHash LSH |
+| 5 | Sequential | CRS-aligned label consistency check |
 
 Additionally runs a **leakage guard**: removes synthetic records with Jaccard similarity > 0.70 to any record in the test or canary splits. Conflicting benign edge-cases are quarantined rather than deleted.
 
@@ -246,6 +250,10 @@ Recomputes the taxonomy inventory after augmentation; verifies that per-class ga
 #### `07_stratified_split.py`
 
 Re-runs stratified split on the augmented corpus (same logic as `2_baselines/00_stratified_split.py`) to produce the final `data/splits/` files used by all downstream training stages.
+
+#### `08_token_leakage.py`
+
+Token↔label leakage audit (`make data_leakage`). Ranks tokens by how strongly their presence predicts the label (mutual information / `P(malicious|token)`) and flags frequent, near-deterministic *incidental* (host/number/id-shaped) predictors — shortcuts the model must not learn. Runs a counterfactual filler swap (re-randomise incidental values, recompute) to confirm the `§NAME§` fillers are label-neutral, and writes `reports/3_data_augmentation/metrics/08_token_leakage.json`.
 
 ---
 
@@ -406,7 +414,7 @@ Comprehensive evaluation suite covering detection efficacy, latency, adversarial
 | Script | Purpose |
 |---|---|
 | `14_comparison_table.py` | Master table: all models × all metrics; `master_comparison_table.{csv,json}` |
-| `15_generate_report.py` | Consolidates all eval JSON into `reports/final_evaluation_report.json` |
+| `15_generate_report.py` | Consolidates all eval JSON into `reports/7_evaluation/15_final_evaluation_report.json` |
 | `16_deployment_recommendation.py` | Weighted scoring (AUC-PR 50%, latency 30%, robustness 20%) → deployment decision; exits 1 if no model passes all SLOs |
 | `17_push_to_hub.py` | Pushes all artifacts to HuggingFace Hub (`make push_hub` / `make push_hub_dry`) |
 
@@ -418,7 +426,7 @@ Comprehensive evaluation suite covering detection efficacy, latency, adversarial
 Stage 1  →  data/normalized/*.parquet
 Stage 2  →  data/splits/{train,val,test,adversarial,canary}.parquet
              reports/slos.json
-             reports/metrics/baselines.json
+             reports/2_baselines/metrics/03_baselines.json
 Stage 3  →  data/splits/ (augmented, re-split)
 Stage 4  →  tokenizers/track_a/
              tokenizers/track_b/
@@ -426,10 +434,10 @@ Stage 5  →  models/teacher/{track_a_large,track_a_small}/best_model
 Stage 6  →  models/track_b/99m/best_99m.pt
              models/student/best_student.pt
              models/student/student.onnx
-Stage 7  →  reports/metrics/*.json
-             reports/metrics/master_comparison_table.{csv,json}
-             reports/final_evaluation_report.json
-             reports/metrics/deployment_recommendation.json
+Stage 7  →  reports/7_evaluation/{metrics,latency}/*.json
+             reports/7_evaluation/metrics/14_master_comparison_table.{csv,json}
+             reports/7_evaluation/15_final_evaluation_report.json
+             reports/7_evaluation/metrics/16_deployment_recommendation.json
 ```
 
 All intermediate artefacts use the `HttpRecord` / Parquet schema defined in `ai_waf_v2/data/schema.py`. All training and evaluation metrics are logged to MLflow; run `make ui` to browse them at `localhost:5000`.

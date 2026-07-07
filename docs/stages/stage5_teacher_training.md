@@ -1,5 +1,7 @@
 # Stage 5 — Teacher Training
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/5_teacher_training/`  
 **Make target:** `make train_b_99m` (Track B primary path); Track A scripts run individually  
 **Outputs:** `models/track_a/large/latest`, `models/track_a/small/latest`, `models/track_b/99m/latest`
@@ -349,3 +351,7 @@ Scripts must be run from the repo root so that `from checkpoint_utils import ...
 | Teacher checkpoint for 03b | `models/track_a/large/latest` must exist before running `03b_distill_track_b.py` |
 
 Early stopping fires when `macro_f1` has not improved for `patience` epochs. If training ends suspiciously early (epoch 1–2), check the val split for class imbalance and confirm `data/splits/val.parquet` was produced by Stage 3's stratified split.
+
+---
+
+[◀ Stage 4 — Tokenization](stage4_tokenization.md) · [All Stages ▲](stages.md) · [Stage 6 — Distillation & Compression ▶](stage6_distillation_and_compression.md)

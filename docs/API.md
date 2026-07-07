@@ -1,5 +1,7 @@
 # API Reference — `ai_waf_v2`
 
+> **📖 Docs:** [Index](README.md) · [User Guide](USER_GUIDE.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Stages](stages/stages.md) · [Model Card](MODEL_CARD.md) · [Repo README](../README.md)
+
 The core library imported by all pipeline stages. It is self-contained: importing
 it needs no GPU, network, or dataset files. This page summarises the public API;
 for design rationale see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -60,6 +62,73 @@ table_to_records(table)   -> list[HttpRecord]
   `load_split_stats(...)`.
 - `WafCollator` — pads each batch to its own longest sequence; optional
   `include_teacher_logits` and `include_attack_class`.
+
+---
+
+## `augment` — synthetic attack generation
+
+Dependency-light helpers used by Stage 3 (imported by the digit-prefixed stage
+scripts, unit-tested via `tests/test_all.py`).
+
+### Recursive PCFG (`augment.pcfg`)
+
+- `Pcfg(name, rules, start="START", max_depth=6, max_len=256)` — samples a
+  probabilistic recursive context-free grammar; `.sample(rng) -> str`. Terminates
+  by construction (past `max_depth`, only minimal-cost productions are used; the
+  constructor rejects non-terminating grammars).
+- `load_pcfg_grammars(path) -> dict[str, Pcfg]` — loads grammars from YAML
+  (`config/pcfg_grammars.yaml`); returns `{}` if the file is absent.
+- `PcfgSampler(registry, fallback, oversample=8).generate(attack_class, n, rng)`
+  — samples the PCFG where present, delegates to `fallback` for classes without a
+  grammar, and tops up from `fallback` when uniques run short.
+- `T/N/F/OPENQ/CLOSEQ`, `PCFG_FUNCS` — grammar symbol constructors and the named
+  callable-terminal registry referenced from YAML as `f:<name>`.
+
+```python
+from ai_waf_v2.augment import load_pcfg_grammars, PcfgSampler
+registry = load_pcfg_grammars("config/pcfg_grammars.yaml")
+sampler  = PcfgSampler(registry, fallback=flat_generator.generate_payloads)
+payloads = sampler.generate("sqli", 100, rng)
+```
+
+### Fillers (`augment.fillers`)
+
+Label-neutral, high-cardinality substitution for incidental values so the model
+learns attack *structure*, not constants like `evil.com`/`4444`.
+
+- `fill_placeholders(text, rng, strict=False) -> str` — replace `§NAME§` /
+  `§NAME#TAG§` (coreference) placeholders from `FILLERS`. Unknown names are left
+  untouched unless `strict=True` (which raises — used by tests).
+- `FILLERS` — name → generator: `HOST IP PORT PATH PARAM IDENT STR INT COL WORD JS_BODY`.
+- `placeholder_names(text) -> set[str]` — filler names referenced in a string.
+- `scrub_textbook_hosts(text, rng) -> str` — replace textbook hosts (`evil.com`…)
+  in LLM output with `HOST` draws.
+
+The same generators fill benign traffic in Stage 3.3, so a filled token carries no
+label signal — the payload-level analogue of `HttpMetadataDistribution`.
+
+### Leakage measurement (`eval.leakage`)
+
+Checks whether the dataset/model keys on incidental constants instead of structure.
+
+- `token_leakage(texts, labels, min_df=5, top_k=50) -> LeakageReport` — per-token
+  `P(malicious|token)`, lift, PMI and mutual information; each token flagged
+  `incidental` (host/number/id-shaped) or structural. Frequent + near-deterministic
+  incidental tokens are shortcut candidates.
+- `counterfactual_auc_delta(predict_fn, texts, labels, rng) -> {auc, auc_swapped, delta}`
+  — `swap_fillers` re-randomises incidental values; a small `delta` means the
+  model relied on structure, a large one means it memorised constants.
+- `swap_fillers`, `auc_roc`, `pretokenize` — building blocks (pure stdlib).
+
+Backs Stage 3.8 (`make data_leakage`), which writes `reports/3_data_augmentation/metrics/08_token_leakage.json`
+and a model-free counterfactual (swap fillers, recompute — filler-driven MI drops).
+
+### Payload validity (`augment.validity`)
+
+- `is_valid_for_class(attack_class, text) -> bool` — lightweight structural check
+  (regex + bracket balance; no parser deps) that a payload matches its class.
+  Backs the Stage 3.4 quality gate. Unknown classes always pass.
+- `VALIDATORS` — the per-class validator registry.
 
 ---
 

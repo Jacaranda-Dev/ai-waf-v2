@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 try:
     from dotenv import load_dotenv as _load_dotenv
@@ -64,20 +64,20 @@ class DatasetEntry(BaseModel):
     name:         str
 
     # ── Acquisition ───────────────────────────────────────
-    converter_id:         Optional[str]       = None
-    kaggle_handle:        Optional[str]       = None
+    converter_id:         str | None       = None
+    kaggle_handle:        str | None       = None
     url:                  str                 = ""
     mirrors:              list[str]           = Field(default_factory=list)
-    archive_sha256:       Optional[str]       = None
-    manual_instructions:  Optional[str]       = None
+    archive_sha256:       str | None       = None
+    manual_instructions:  str | None       = None
 
     # ── Metadata ──────────────────────────────────────────
-    description:  Optional[str] = None
-    license:      Optional[str] = None
-    citation:     Optional[str] = None
+    description:  str | None = None
+    license:      str | None = None
+    citation:     str | None = None
 
     # ── Output ────────────────────────────────────────────
-    output_filename: Optional[str] = None
+    output_filename: str | None = None
     label_col:       str           = "label"
 
 
@@ -90,7 +90,7 @@ class SplitConfig(BaseModel):
     stratify_by: list[str] = Field(default_factory=lambda: ["label", "attack_class"])
 
     @model_validator(mode="after")
-    def _check_sum(self) -> "SplitConfig":
+    def _check_sum(self) -> SplitConfig:
         total = self.train + self.val + self.test + self.adversarial + self.canary
         if abs(total - 1.0) > 1e-4:
             raise ValueError(f"Split ratios must sum to 1.0, got {total:.4f}")
@@ -156,6 +156,7 @@ class AugFilterConfig(BaseModel):
     min_token_length:         int   = 4
     max_token_length:         int   = 256
     label_consistency_check:  bool  = True
+    class_validity_check:     bool  = True   # reject payloads that don't match their attack_class
 
 
 class AugmentationConfig(BaseModel):
@@ -164,6 +165,7 @@ class AugmentationConfig(BaseModel):
     chain_length:          int   = 2     # mutation chain depth in attack synthesis
     llm_ratio:             float = 0.5   # stage 3.1: fraction of seed payloads from LLM
     benign_llm_ratio:      float = 0.33  # stage 3.3: fraction of total benign from LLM
+    pcfg_grammars_path:    str   = "config/pcfg_grammars.yaml"  # recursive attack grammars
     rules:      AugRulesConfig   = Field(default_factory=AugRulesConfig)
     grammar:    AugGrammarConfig = Field(default_factory=AugGrammarConfig)
     llm:        AugLlmConfig     = Field(default_factory=AugLlmConfig)
@@ -209,7 +211,7 @@ class ModelArchConfig(BaseModel):
     output_dir:  Path  = Path("models/track_b/99m")
 
     @model_validator(mode="after")
-    def _check_head_dim(self) -> "ModelArchConfig":
+    def _check_head_dim(self) -> ModelArchConfig:
         if self.d_model % self.n_heads != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) must be divisible by n_heads ({self.n_heads}). "
@@ -296,7 +298,7 @@ class DistillationTrainingConfig(BaseModel):
     early_stopping_metric:    str   = "auc_pr"
 
     @model_validator(mode="after")
-    def _check_alpha_sum(self) -> "DistillationTrainingConfig":
+    def _check_alpha_sum(self) -> DistillationTrainingConfig:
         if abs(self.alpha_soft + self.alpha_hard - 1.0) > 1e-4:
             raise ValueError(
                 f"alpha_soft + alpha_hard must equal 1.0, "
@@ -433,8 +435,8 @@ def load_config(path: str | Path = "config/pipeline.yaml") -> PipelineConfig:
 # CLI helper: python -m ai_waf_v2.utils.config config/pipeline.yaml
 # ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import sys
     import json
+    import sys
 
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else "config/pipeline.yaml"
     cfg = load_config(cfg_path)

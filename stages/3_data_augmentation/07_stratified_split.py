@@ -34,6 +34,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -316,7 +317,7 @@ def run(args: argparse.Namespace) -> None:
     health["leakage_threshold"]      = LEAKAGE_THRESHOLD
     health["stratification_key"]     = "label × attack_class × source_bucket"
 
-    stats_path = Path(cfg.paths.reports) / "metrics" / "split_stats.json"
+    stats_path = report_path("split_stats.json", cfg.paths.reports)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     health["timings_s"] = timer.timings
     stats_path.write_text(json.dumps(health, indent=2))

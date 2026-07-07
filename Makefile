@@ -167,9 +167,14 @@ data_split:
 	$(PYTHON) stages/3_data_augmentation/07_stratified_split.py        --config $(CFG)
 	# Produces: data/splits/{train,val,test,adversarial,canary}.parquet
 
+# 3.8 — Token-leakage probe: token↔label MI report + counterfactual filler swap
+data_leakage:
+	@echo "=== Stage 3.8: Token-Leakage Probe (shortcut / filler-neutrality check) ==="
+	$(PYTHON) stages/3_data_augmentation/08_token_leakage.py           --config $(CFG)
+
 # Full augmentation pipeline in order
 data_augment_all: data_augment_synthesis data_augment_benign data_augment_framing \
-                  data_filter data_validate data_split
+                  data_filter data_validate data_split data_leakage
 
 # ─────────────────────────────────────────────
 # STAGE 4 — TOKENIZATION (A/B parallel tracks)
@@ -344,7 +349,7 @@ clean_tokenizers:
 	rm -rf tokenizers/track_a/* tokenizers/track_b/*
 
 clean_reports:
-	rm -rf reports/metrics/* reports/figures/* reports/latency/*
+	find reports -type f ! -name '.gitkeep' -delete
 
 clean_splits:
 	rm -rf data/splits/*

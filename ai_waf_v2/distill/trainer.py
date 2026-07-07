@@ -16,14 +16,12 @@ Usage
 from __future__ import annotations
 
 import math
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from ai_waf_v2.distill.losses import DistillationLoss
 from ai_waf_v2.eval.metrics import compute_metrics
@@ -31,6 +29,7 @@ from ai_waf_v2.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from torch.utils.data import DataLoader
+
     from ai_waf_v2.models.head import WafClassifier
     from ai_waf_v2.models.student import StudentClassifier
     from ai_waf_v2.utils.config import PipelineConfig
@@ -68,11 +67,11 @@ class DistillationTrainer:
 
     def __init__(
         self,
-        cfg:                  "PipelineConfig",
-        teacher:              "WafClassifier",
-        student:              "StudentClassifier",
-        train_loader:         "DataLoader",
-        val_loader:           "DataLoader",
+        cfg:                  PipelineConfig,
+        teacher:              WafClassifier,
+        student:              StudentClassifier,
+        train_loader:         DataLoader,
+        val_loader:           DataLoader,
         device:               torch.device | None = None,
         temperature_scheduler: object | None = None,
     ) -> None:
@@ -155,6 +154,7 @@ class DistillationTrainer:
     def train(self) -> None:
         """Run the full distillation training loop."""
         import mlflow
+
         from ai_waf_v2.utils.mlflow_utils import init_experiment
 
         init_experiment(self.cfg)
@@ -193,7 +193,7 @@ class DistillationTrainer:
                 self.optimizer.zero_grad()
                 if nan_streak >= 20:
                     raise RuntimeError(
-                        f"Distillation diverged: 20 consecutive non-finite losses. "
+                        "Distillation diverged: 20 consecutive non-finite losses. "
                         "Check LR, temperature, and data quality."
                     )
                 step += 1
