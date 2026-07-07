@@ -197,7 +197,7 @@ class CheckpointTracker:
     experiment_type: str
     models_root:     Path
     metric:          str  = "macro_f1"
-    mode:            Literal["max", "min"] = "max"
+    mode:            Literal[max, min] = "max"
     patience:        int  = 5
 
     best_value:   float = field(init=False)

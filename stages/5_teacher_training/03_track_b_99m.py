@@ -31,19 +31,18 @@ import mlflow
 import pyarrow.parquet as pq
 import torch
 import torch.nn as nn
+from checkpoint_utils import CheckpointTracker
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+from track_b_model import TinyTransformerEncoder, TrackB99MModel  # noqa: F401
+from train_utils import WafCollator, build_optimizer, evaluate, flatten_metrics, run_epoch
 
 from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
-from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.pipeline import check_output, require_inputs
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
-
-from checkpoint_utils import CheckpointTracker
-from track_b_model import TinyTransformerEncoder, TrackB99MModel  # noqa: F401
-from train_utils import WafCollator, build_optimizer, evaluate, flatten_metrics, run_epoch
 
 log = get_logger(__name__)
 

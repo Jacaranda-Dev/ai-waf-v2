@@ -34,7 +34,6 @@ from typing import Any
 import pyarrow as pa
 from pydantic import BaseModel, Field, field_validator
 
-
 # ─────────────────────────────────────────────────────────
 # Canonical attack-class mapping
 # Single source of truth imported by all pipeline stages.
@@ -112,7 +111,7 @@ class HttpRecord(BaseModel):
         return v.upper()
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "HttpRecord":
+    def from_dict(cls, data: dict[str, Any]) -> HttpRecord:
         """Build from a raw dict, tolerating extra keys."""
         known = cls.model_fields.keys()
         return cls(**{k: v for k, v in data.items() if k in known})
@@ -125,7 +124,7 @@ class HttpRecord(BaseModel):
             return {}
 
 
-    def build_raw(self) -> "HttpRecord":
+    def build_raw(self) -> HttpRecord:
         """
         Reconstruct a raw HTTP/1.1 request string and store it in self.raw.
         This is what the tokenizer receives.

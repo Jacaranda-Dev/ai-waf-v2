@@ -1,5 +1,7 @@
 # Attack Classes - CMDI
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [All Stages](../stages/stages.md) · [Attack Synthesis](attack_synthesis.md)
+
 Command injection is an attack where the goal is to execute arbitrary commands on the host operating system via a vulnerable application.
 A web application is vulnerable to command injection if it passes unsanitized user input directly to the operating system shell. 
 

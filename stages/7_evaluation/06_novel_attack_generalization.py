@@ -38,6 +38,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -355,7 +356,7 @@ def run(args: argparse.Namespace) -> None:
         f"{cfg.model.track_b_99m.output_dir}/best_99m.pt": "run 00_train_teacher_99m.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "novel_attack_generalization.json",
+        report_path("novel_attack_generalization.json", cfg.paths.reports),
         args.force, "Stage 7.6 novel attack generalization"
     ):
         return
@@ -431,7 +432,7 @@ def run(args: argparse.Namespace) -> None:
                 f"n={n_total}"
             )
 
-    out = Path(cfg.paths.reports) / "metrics" / "novel_attack_generalization.json"
+    out = report_path("novel_attack_generalization.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     results["timings_s"] = timer.timings
     out.write_text(json.dumps(results, indent=2))

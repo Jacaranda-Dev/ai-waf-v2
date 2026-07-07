@@ -1,8 +1,10 @@
 # Stage 7 — Evaluation
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [Architecture](../ARCHITECTURE.md) · [API](../API.md) · [All Stages](stages.md) · [Model Card](../MODEL_CARD.md)
+
 **Directory:** `stages/7_evaluation/`  
 **Make targets:** `make eval_detection`, `make eval_latency`, `make eval_adversarial`, `make eval_ablation`, `make eval_interp`, `make compare_all`, `make report`  
-**Outputs:** `reports/metrics/*.json`, `reports/final_evaluation_report.json`, `reports/metrics/master_comparison_table.{csv,json}`, `reports/metrics/deployment_recommendation.json`
+**Outputs:** `reports/7_evaluation/{metrics,latency}/*.json`, `reports/7_evaluation/15_final_evaluation_report.json`, `reports/7_evaluation/metrics/14_master_comparison_table.{csv,json}`, `reports/7_evaluation/metrics/16_deployment_recommendation.json`
 
 ---
 
@@ -23,22 +25,22 @@ Every script is idempotent: it skips its output if already present unless `--for
 
 | Script | Purpose | Key output |
 |---|---|---|
-| `01_detection_metrics.py` | Full metric suite on test split for all models | `reports/metrics/detection_results.json` |
-| `02_latency_bench.py` | p50/p95/p99/p99.9 latency + throughput; SLO verdict | `reports/metrics/latency_summary.json` |
-| `03_memory_footprint.py` | VRAM, RAM, and checkpoint size for all models | `reports/metrics/memory_footprint.json` |
-| `04_evasion_payloads.py` | Detection rate against all TAMPER_REGISTRY transforms | `reports/metrics/adversarial_summary.json` |
-| `05_obfuscation_robustness.py` | Chained multi-tamper evasion attempt | `reports/metrics/obfuscation_robustness.json` |
-| `06_novel_attack_generalization.py` | Grammar-fuzzed novel attack families with 95% CIs | `reports/metrics/novel_attack_generalization.json` |
-| `07_tokenizer_ablation.py` | Track A vs Track B with transformer-corrected proxy estimate | `reports/metrics/tokenizer_ablation.json` |
-| `08_augmentation_ablation.py` | With vs. without synthetic augmentation | `reports/metrics/augmentation_ablation.json` |
-| `09_model_size_scaling.py` | AUC-PR vs. parameter count (scaling curve) | `reports/metrics/model_size_scaling.json` |
-| `10_label_smoothing_ablation.py` | Effect of label smoothing on calibration and F1 | `reports/metrics/label_smoothing_ablation.json` |
-| `11_attention_visualization.py` | Attention heatmaps per attack class; head specialisation | `reports/metrics/attention_visualization.json` |
-| `12_shap_analysis.py` | KernelSHAP token importance on student model | `reports/metrics/shap_analysis.json` |
-| `13_error_analysis.py` | FP/FN characterisation by attack class | `reports/metrics/error_analysis.json` |
-| `14_comparison_table.py` | Master table: all models × all metrics (CSV + JSON) | `reports/metrics/master_comparison_table.{csv,json}` |
-| `15_generate_report.py` | Consolidated JSON report from all eval outputs | `reports/final_evaluation_report.json` |
-| `16_deployment_recommendation.py` | Weighted scoring matrix → deployment decision | `reports/metrics/deployment_recommendation.json` |
+| `01_detection_metrics.py` | Full metric suite on test split for all models | `reports/7_evaluation/metrics/01_detection_results.json` |
+| `02_latency_bench.py` | p50/p95/p99/p99.9 latency + throughput; SLO verdict | `reports/7_evaluation/latency/02_latency_summary.json` |
+| `03_memory_footprint.py` | VRAM, RAM, and checkpoint size for all models | `reports/7_evaluation/metrics/03_memory_footprint.json` |
+| `04_evasion_payloads.py` | Detection rate against all TAMPER_REGISTRY transforms | `reports/7_evaluation/metrics/04_adversarial_summary.json` |
+| `05_obfuscation_robustness.py` | Chained multi-tamper evasion attempt | `reports/7_evaluation/metrics/05_obfuscation_robustness.json` |
+| `06_novel_attack_generalization.py` | Grammar-fuzzed novel attack families with 95% CIs | `reports/7_evaluation/metrics/06_novel_attack_generalization.json` |
+| `07_tokenizer_ablation.py` | Track A vs Track B with transformer-corrected proxy estimate | `reports/7_evaluation/metrics/07_tokenizer_ablation.json` |
+| `08_augmentation_ablation.py` | With vs. without synthetic augmentation | `reports/7_evaluation/metrics/08_augmentation_ablation.json` |
+| `09_model_size_scaling.py` | AUC-PR vs. parameter count (scaling curve) | `reports/7_evaluation/metrics/09_model_size_scaling.json` |
+| `10_label_smoothing_ablation.py` | Effect of label smoothing on calibration and F1 | `reports/7_evaluation/metrics/10_label_smoothing_ablation.json` |
+| `11_attention_visualization.py` | Attention heatmaps per attack class; head specialisation | `reports/7_evaluation/metrics/11_attention_visualization.json` |
+| `12_shap_analysis.py` | KernelSHAP token importance on student model | `reports/7_evaluation/metrics/12_shap_analysis.json` |
+| `13_error_analysis.py` | FP/FN characterisation by attack class | `reports/7_evaluation/metrics/13_error_analysis.json` |
+| `14_comparison_table.py` | Master table: all models × all metrics (CSV + JSON) | `reports/7_evaluation/metrics/14_master_comparison_table.{csv,json}` |
+| `15_generate_report.py` | Consolidated JSON report from all eval outputs | `reports/7_evaluation/15_final_evaluation_report.json` |
+| `16_deployment_recommendation.py` | Weighted scoring matrix → deployment decision | `reports/7_evaluation/metrics/16_deployment_recommendation.json` |
 | `17_push_to_hub.py` | Push all artifacts to HuggingFace Hub | — |
 
 ---
@@ -52,8 +54,8 @@ Runs inference on the test split for all available models and computes the core 
 **Models evaluated:**
 - Track B 99M (`best_99m.pt`) — the teacher
 - Student INT8 (`best_student.pt`) — the distilled model
-- XGBoost baseline — read from `reports/metrics/baselines.json` (produced by Stage 2)
-- ModSecurity CRS — read from `reports/metrics/baselines.json`
+- XGBoost baseline — read from `reports/2_baselines/metrics/03_baselines.json` (produced by Stage 2)
+- ModSecurity CRS — read from `reports/2_baselines/metrics/03_baselines.json`
 
 **Metrics per model and per attack class:**
 - F1, Precision, Recall, FPR, FNR, AUC-ROC, AUC-PR
@@ -254,25 +256,25 @@ Stage 6 → models/student/best_student.pt
 Stage 3 → data/splits/test.parquet
            data/splits/adversarial.parquet
 Stage 4 → tokenizers/track_b/
-Stage 2 → reports/metrics/baselines.json
+Stage 2 → reports/2_baselines/metrics/03_baselines.json
            reports/slos.json
 
-  01_detection_metrics        →  reports/metrics/detection_results.json
-  02_latency_bench            →  reports/metrics/latency_summary.json
-  03_memory_footprint         →  reports/metrics/memory_footprint.json
-  04_evasion_payloads         →  reports/metrics/adversarial_summary.json
-  05_obfuscation_robustness   →  reports/metrics/obfuscation_robustness.json
-  06_novel_attack_*           →  reports/metrics/novel_attack_generalization.json
-  07_tokenizer_ablation       →  reports/metrics/tokenizer_ablation.json
-  08_augmentation_ablation    →  reports/metrics/augmentation_ablation.json
-  09_model_size_scaling       →  reports/metrics/model_size_scaling.json
-  10_label_smoothing_ablation →  reports/metrics/label_smoothing_ablation.json
-  11_attention_visualization  →  reports/metrics/attention_visualization.json
-  12_shap_analysis            →  reports/metrics/shap_analysis.json
-  13_error_analysis           →  reports/metrics/error_analysis.json
-  14_comparison_table         →  reports/metrics/master_comparison_table.{csv,json}
-  15_generate_report          →  reports/final_evaluation_report.json
-  16_deployment_recommendation → reports/metrics/deployment_recommendation.json
+  01_detection_metrics        →  reports/7_evaluation/metrics/01_detection_results.json
+  02_latency_bench            →  reports/7_evaluation/latency/02_latency_summary.json
+  03_memory_footprint         →  reports/7_evaluation/metrics/03_memory_footprint.json
+  04_evasion_payloads         →  reports/7_evaluation/metrics/04_adversarial_summary.json
+  05_obfuscation_robustness   →  reports/7_evaluation/metrics/05_obfuscation_robustness.json
+  06_novel_attack_*           →  reports/7_evaluation/metrics/06_novel_attack_generalization.json
+  07_tokenizer_ablation       →  reports/7_evaluation/metrics/07_tokenizer_ablation.json
+  08_augmentation_ablation    →  reports/7_evaluation/metrics/08_augmentation_ablation.json
+  09_model_size_scaling       →  reports/7_evaluation/metrics/09_model_size_scaling.json
+  10_label_smoothing_ablation →  reports/7_evaluation/metrics/10_label_smoothing_ablation.json
+  11_attention_visualization  →  reports/7_evaluation/metrics/11_attention_visualization.json
+  12_shap_analysis            →  reports/7_evaluation/metrics/12_shap_analysis.json
+  13_error_analysis           →  reports/7_evaluation/metrics/13_error_analysis.json
+  14_comparison_table         →  reports/7_evaluation/metrics/14_master_comparison_table.{csv,json}
+  15_generate_report          →  reports/7_evaluation/15_final_evaluation_report.json
+  16_deployment_recommendation → reports/7_evaluation/metrics/16_deployment_recommendation.json
 ```
 
 ---
@@ -306,3 +308,7 @@ make push_hub HF_REVISION=v1.0 HF_ONLY=models  # tag a release
 |---|---|
 | SHAP analysis (7.12) | `shap` — `pip install shap` |
 | HuggingFace push (7.17) | `huggingface_hub` — included in `make setup MODE=full` |
+
+---
+
+[◀ Stage 6 — Distillation & Compression](stage6_distillation_and_compression.md) · [All Stages ▲](stages.md) · _(last stage)_ ▶

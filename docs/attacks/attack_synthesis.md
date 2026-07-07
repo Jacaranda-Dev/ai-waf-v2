@@ -1,5 +1,7 @@
 # Attack Synthesis — Stage 3.1
 
+> **📖 Docs:** [Index](../README.md) · [User Guide](../USER_GUIDE.md) · [All Stages](../stages/stages.md) · [Attack Synthesis](attack_synthesis.md)
+
 **Script:** `stages/3_data_augmentation/01_attack_synthesis.py`  
 **Output:** `data/augmented/synthesis/synthesized_attacks.parquet`  
 **Make target:** part of `make data_augment_all`
@@ -219,7 +221,7 @@ Records that fail Pydantic validation are silently dropped. The valid records ar
 
 ## Gap Analysis
 
-`AugmentationGovernor` reads `reports/metrics/taxonomy_inventory.json` (produced by Stage 1) to determine how many samples each class currently has. Only classes below `target_per_class` are synthesised.
+`AugmentationGovernor` reads `reports/1_data_acquisition_and_curation/metrics/03_taxonomy_inventory.json` (produced by Stage 1) to determine how many samples each class currently has. Only classes below `target_per_class` are synthesised.
 
 ```
 gap = max(0, target_per_class - current_count)
@@ -282,7 +284,7 @@ Set `LLM_DEBUG=1` to log a truncated preview of every LLM response.
 **Parquet file:** `data/augmented/synthesis/synthesized_attacks.parquet`  
 Schema: `HttpRecord` — fields `id`, `method`, `path`, `query_string`, `headers`, `body`, `raw`, `label=1`, `attack_class`, `source`
 
-**Stats file:** `reports/metrics/augmentation_synthesis.json`
+**Stats file:** `reports/3_data_augmentation/metrics/01_augmentation_synthesis.json`
 
 ```json
 {

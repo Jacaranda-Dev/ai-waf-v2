@@ -12,8 +12,8 @@ Pulls from:
   - memory_footprint.json        (checkpoint size MB, param count)
 
 Output:
-  - reports/metrics/master_comparison_table.csv   (human-readable)
-  - reports/metrics/master_comparison_table.json  (consumed by 16_deployment_recommendation.py)
+  - reports/7_evaluation/metrics/14_master_comparison_table.csv   (human-readable)
+  - reports/7_evaluation/metrics/14_master_comparison_table.json  (consumed by 16_deployment_recommendation.py)
 
 Run:
     python stages/7_evaluation/14_comparison_table.py --config config/pipeline.yaml
@@ -32,6 +32,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -112,26 +113,22 @@ def run(args: argparse.Namespace) -> None:
     cfg         = load_config(args.config)
 
     require_inputs({
-        f"{Path(cfg.paths.reports) / 'metrics' / 'detection_results.json'}": "run 01_detection_metrics.py",
+        str(report_path("detection_results.json", cfg.paths.reports, mkdir=False)): "run 01_detection_metrics.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "master_comparison_table.json",
+        report_path("master_comparison_table.json", cfg.paths.reports),
         args.force, "Stage 7.14 comparison table"
     ):
         return
 
-    reports_dir = Path(cfg.paths.reports)
-    metrics_dir = reports_dir / "metrics"
-    lat_dir     = reports_dir / "latency"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Load all report files ─────────────────────────────────────────────────
-    det_data         = _safe_load(metrics_dir / "detection_results.json")           or {}
-    lat_data         = _safe_load(lat_dir / "latency_summary.json")                 or {}
-    adv_data         = _safe_load(metrics_dir / "adversarial_summary.json")         or {}
-    novel_data       = _safe_load(metrics_dir / "novel_attack_generalization.json") or {}
-    mem_data         = _safe_load(metrics_dir / "memory_footprint.json")            or {}
-    baselines_post   = _safe_load(metrics_dir / "baselines_post_aug.json")          or {}
+    det_data         = _safe_load(report_path("detection_results.json", cfg.paths.reports))           or {}
+    lat_data         = _safe_load(report_path("latency_summary.json", cfg.paths.reports))                 or {}
+    adv_data         = _safe_load(report_path("adversarial_summary.json", cfg.paths.reports))         or {}
+    novel_data       = _safe_load(report_path("novel_attack_generalization.json", cfg.paths.reports)) or {}
+    mem_data         = _safe_load(report_path("memory_footprint.json", cfg.paths.reports))            or {}
+    baselines_post   = _safe_load(report_path("baselines_post_aug.json", cfg.paths.reports))          or {}
 
     # Pre-compute mean novel detection (same for all model rows since the novel
     # eval currently only runs on the teacher; extend per-model when available)
@@ -219,12 +216,12 @@ def run(args: argparse.Namespace) -> None:
     df = df.sort_values("AUC-PR", ascending=False, ignore_index=True)
 
     # ── Save CSV ──────────────────────────────────────────────────────────────
-    csv_path = metrics_dir / "master_comparison_table.csv"
+    csv_path = report_path("master_comparison_table.csv", cfg.paths.reports)
     df.to_csv(csv_path, index=False, float_format="%.5f")
     log.info(f"Master comparison table (CSV) saved to {csv_path}")
 
     # ── Save JSON (for downstream scripts) ───────────────────────────────────
-    json_path = metrics_dir / "master_comparison_table.json"
+    json_path = report_path("master_comparison_table.json", cfg.paths.reports)
     json_path.write_text(json.dumps(
         df.where(df.notna(), other=None).to_dict(orient="records"), indent=2
     ))

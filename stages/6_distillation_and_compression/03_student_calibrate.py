@@ -17,7 +17,7 @@ Method:
   - Collect student logit scores on the validation set.
   - Sweep decision thresholds and compute precision, recall, F1, FPR.
   - Select the threshold that maximises F1 subject to FPR ≤ cfg.slo.max_fpr.
-  - Save calibrated threshold to reports/metrics/student_threshold.json.
+  - Save calibrated threshold to reports/6_distillation_and_compression/metrics/03_student_threshold.json.
 
 Run:
     python stages/6_distillation_and_compression/03_student_calibrate.py \
@@ -42,6 +42,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -130,7 +131,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet": "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "student_threshold.json",
+        report_path("student_threshold.json", cfg.paths.reports),
         args.force, "Stage 6.3 student calibration"
     ):
         return
@@ -205,10 +206,8 @@ def run(args: argparse.Namespace) -> None:
         )
 
     # ── Save ──────────────────────────────────────
-    out_dir = Path(cfg.paths.reports) / "metrics"
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_path = out_dir / "student_threshold.json"
+    out_path = report_path("student_threshold.json", cfg.paths.reports)
     out_path.write_text(json.dumps({
         "calibrated_threshold": best["threshold"],
         "metrics_at_threshold": best,

@@ -21,18 +21,16 @@ from __future__ import annotations
 
 import contextlib
 import math
-from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import torch
-from tqdm import tqdm
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
-from transformers import PreTrainedModel
-
+from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # 1. Classification head

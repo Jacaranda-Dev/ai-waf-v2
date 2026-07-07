@@ -73,9 +73,9 @@ class StudentClassifier(nn.Module):
     @classmethod
     def from_config(
         cls,
-        cfg: "StudentModelConfig",
+        cfg: StudentModelConfig,
         teacher_d_model: int | None = None,
-    ) -> "StudentClassifier":
+    ) -> StudentClassifier:
         encoder = WafEncoder(
             vocab_size=cfg.vocab_size,
             d_model=cfg.d_model,
@@ -158,7 +158,7 @@ class StudentClassifier(nn.Module):
     def prepare_for_int8_quantization(
         self,
         exclude_modules: list[str] | None = None,
-    ) -> "StudentClassifier":
+    ) -> StudentClassifier:
         """
         Replace Linear layers with bitsandbytes Linear8bitLt for INT8
         quantization-aware training.
@@ -214,10 +214,10 @@ class StudentClassifier(nn.Module):
     def load(
         cls,
         path: str | Path,
-        cfg: "StudentModelConfig",
+        cfg: StudentModelConfig,
         teacher_d_model: int | None = None,
         map_location: str = "cpu",
-    ) -> "StudentClassifier":
+    ) -> StudentClassifier:
         model = cls.from_config(cfg, teacher_d_model=teacher_d_model)
         # weights_only=False: bnb state dicts contain plain Python strings
         # (weight_format) that weights_only=True rejects.

@@ -1,5 +1,7 @@
 # Architecture
 
+> **📖 Docs:** [Index](README.md) · [User Guide](USER_GUIDE.md) · [Architecture](ARCHITECTURE.md) · [API](API.md) · [Stages](stages/stages.md) · [Model Card](MODEL_CARD.md) · [Repo README](../README.md)
+
 This document describes the big-picture design: how the pipeline stages connect,
 how the core library is organised, and the key decisions behind both. For how to
 *run* it, see [USER_GUIDE.md](USER_GUIDE.md); for the API surface, see
@@ -31,7 +33,7 @@ Stages are strictly sequential; later stages consume earlier artefacts.
 Stage 1  Acquire & curate ─► data/normalized/*.parquet
             │  download · normalize to HttpRecord · cross-dataset dedup · report
             ▼
-Stage 2  Baselines        ─► data/splits/ · reports/slos.json · baseline metrics
+Stage 2  Baselines        ─► data/splits/ · reports/2_baselines/metrics/01_slos.json · baseline metrics
             │  stratified split · SLO definitions · XGBoost · ModSecurity CRS
             ▼
 Stage 3  Augmentation     ─► data/splits/ (augmented, re-split)
@@ -88,6 +90,7 @@ Parquet into PyTorch datasets, tokenizing on the fly.
 ```
 ai_waf_v2/
 ├── data/        schema (HttpRecord), datasets, dynamic-padding collator
+├── augment/     recursive PCFG engine + label-neutral fillers + per-class validity checks
 ├── tokenizer/   custom HTTP-aware BPE (Track B) + pretrained augmentation (Track A)
 ├── models/      WafEncoder (from scratch), classifier head, distillation student
 ├── distill/     weighted CE + KL + hidden-MSE loss, distillation trainer
@@ -144,9 +147,18 @@ so an experiment is fully described by its config plus its MLflow run.
 Augmentation (Stage 3) doesn't just emit raw payloads — it fits method mix, UA
 fingerprints, and header distributions from PCAP traces and applies them to both
 attack re-framing and benign generation, preventing the model from learning to
-detect "synthetic-looking" requests. A four-pass quality gate (format validation,
-tokenizer UNK rate, MinHash-LSH dedup, CRS label consistency) plus a leakage guard
-(Jaccard > 0.70 against test/canary) filters the output.
+detect "synthetic-looking" requests. Attack payloads come from recursive PCFG
+grammars (`ai_waf_v2/augment/pcfg.py`, defined as data in
+`config/pcfg_grammars.yaml`) that reach nested/variable-width structures, falling
+back to flat templates for classes without a grammar. Incidental values in those
+payloads (hosts, ports, ids, JS bodies) are `§NAME§` fillers drawn from
+`ai_waf_v2/augment/fillers.py` — the *same* high-cardinality generators used for
+benign traffic — so the model can't shortcut on a constant like `evil.com`; it's
+the payload-level counterpart of the shared `HttpMetadataDistribution`. A five-pass
+quality gate
+(format validation, tokenizer UNK rate, per-class structural validity, MinHash-LSH
+dedup, CRS label consistency) plus a leakage guard (Jaccard > 0.70 against
+test/canary) filters the output.
 
 ---
 

@@ -95,6 +95,7 @@ def run(args: argparse.Namespace) -> None:
 
     try:
         import mlflow
+
         from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
         init_experiment(cfg)
         with mlflow.start_run(run_name="17_push_to_hub"):

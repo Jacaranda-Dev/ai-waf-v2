@@ -31,6 +31,7 @@ from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -158,7 +159,7 @@ def run(args: argparse.Namespace) -> None:
         "stratification_key": "label × attack_class",
     }
     # Save stats
-    stats_path = Path(cfg.paths.reports) / "metrics" / "split_stats.json"
+    stats_path = report_path("split_stats.json", cfg.paths.reports)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps({**split_stats, "_meta": stats_meta, "timings_s": timer.timings}, indent=2))
     log.info(f"Split stats saved to {stats_path}")

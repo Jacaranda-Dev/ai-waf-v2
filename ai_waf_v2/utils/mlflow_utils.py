@@ -17,13 +17,14 @@ Usage
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Generator
+from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ai_waf_v2.utils.config import PipelineConfig
 
 
-def init_experiment(cfg: "PipelineConfig") -> str:
+def init_experiment(cfg: PipelineConfig) -> str:
     """
     Set the MLflow tracking URI and create (or retrieve) the experiment.
 
@@ -41,7 +42,7 @@ def init_experiment(cfg: "PipelineConfig") -> str:
 
 @contextlib.contextmanager
 def mlflow_run(
-    cfg: "PipelineConfig",
+    cfg: PipelineConfig,
     run_name: str,
     tags: dict[str, str] | None = None,
     nested: bool = False,
@@ -95,6 +96,7 @@ def log_metrics_dict(
         Optional prefix added to every key (e.g. "val/").
     """
     import math
+
     import mlflow
 
     clean = {

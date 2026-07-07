@@ -15,7 +15,7 @@ Reads from:
   - latency_summary.json           (SLO targets)
 
 Outputs:
-  - reports/metrics/deployment_recommendation.json
+  - reports/7_evaluation/metrics/16_deployment_recommendation.json
 
 Run:
     python stages/7_evaluation/16_deployment_recommendation.py \
@@ -34,6 +34,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -77,21 +78,18 @@ def run(args: argparse.Namespace) -> None:
     cfg         = load_config(args.config)
 
     require_inputs({
-        f"{Path(cfg.paths.reports) / 'metrics' / 'master_comparison_table.json'}": "run 14_comparison_table.py",
+        str(report_path("master_comparison_table.json", cfg.paths.reports, mkdir=False)): "run 14_comparison_table.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "deployment_recommendation.json",
+        report_path("deployment_recommendation.json", cfg.paths.reports),
         args.force, "Stage 7.16 deployment recommendation"
     ):
         return
 
-    reports_dir = Path(cfg.paths.reports)
-    metrics_dir = reports_dir / "metrics"
-    lat_dir     = reports_dir / "latency"
 
     # ── Load inputs ───────────────────────────────────────────────────────────
-    table_path = metrics_dir / "master_comparison_table.json"
-    lat_path   = lat_dir / "latency_summary.json"
+    table_path = report_path("master_comparison_table.json", cfg.paths.reports)
+    lat_path   = report_path("latency_summary.json", cfg.paths.reports)
 
     if not table_path.exists():
         log.error(f"master_comparison_table.json not found — run 14_comparison_table.py first")
@@ -203,7 +201,7 @@ def run(args: argparse.Namespace) -> None:
         "all_models_ranked": scored,
     }
 
-    out = metrics_dir / "deployment_recommendation.json"
+    out = report_path("deployment_recommendation.json", cfg.paths.reports)
     out.write_text(json.dumps(recommendation, indent=2, default=str))
 
     # ── Console summary ───────────────────────────────────────────────────────
