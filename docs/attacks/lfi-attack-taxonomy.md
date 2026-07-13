@@ -110,7 +110,11 @@ zip:///filename_path#internal_filename
 - Input Validation: Avoid passing user-submitted input to any filesystem/framework API. Application can maintain an allow list of files, that may be included by the page, and then use an identifier (for example the index number) to access to the selected file. Any request containing an invalid identifier has to be rejected.
 - Use Full Paths: - Avoid including files based on user input. Hardcode or securely map file paths.
 - Disable Dangerous Functions: Restrict `include`, `require`, `fopen`, etc., where unnecessary. Disable remote URL includes (`allow_url_include=0`).
+<<<<<<< HEAD
 - Patch and Update: Regularly update web servers and application code
+=======
+- Patch and Update: Regularly update web servers and application code.
+>>>>>>> NWat
 - Least Privilege: Restrict web server permissions to the minimum  needed.
 
 **References:**
