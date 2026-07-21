@@ -78,6 +78,7 @@ from ai_waf_v2.data.schema import (
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
+from ai_waf_v2.utils.reports import report_path
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 
@@ -1149,10 +1150,8 @@ def run(args: argparse.Namespace) -> None:
         log.warning("No datasets were ingested.")
 
     # ── Write manifest + collection stats ─────────────────────────────────────
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
-    (reports_dir / "download_manifest.json").write_text(json.dumps({
+    (report_path("download_manifest.json", cfg.paths.reports)).write_text(json.dumps({
         "acquired_at": datetime.now(timezone.utc).isoformat(),
         "datasets":    manifest,
     }, indent=2))
@@ -1161,7 +1160,7 @@ def run(args: argparse.Namespace) -> None:
     # The class_distribution field requires a full scan of the merged file;
     # we derive it from the per-dataset stats that were accumulated during
     # the streaming pass so no extra read is needed.
-    (reports_dir / "normalization_stats.json").write_text(json.dumps({
+    (report_path("normalization_stats.json", cfg.paths.reports)).write_text(json.dumps({
         "n_input":              total,
         "n_output":             total,
         "n_dropped":            0,   # per-record drops are counted inside _normalized_record_iter
@@ -1169,7 +1168,7 @@ def run(args: argparse.Namespace) -> None:
         "label_distribution":   {"0": benign, "1": malicious},
     }, indent=2))
 
-    (reports_dir / "collection_stats.json").write_text(json.dumps({
+    (report_path("collection_stats.json", cfg.paths.reports)).write_text(json.dumps({
         "per_dataset": per_dataset_stats,
         "total":       total,
         "benign":      benign,

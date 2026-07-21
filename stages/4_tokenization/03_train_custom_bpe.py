@@ -130,8 +130,6 @@ def run(args: argparse.Namespace) -> None:
 
     tok_cfg     = cfg.tokenizer.track_b
     splits_dir  = Path(cfg.paths.data_splits)
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
 
     corpus_path = Path(tok_cfg.output_dir) / "train_corpus.txt"
     timer       = StepTimer()

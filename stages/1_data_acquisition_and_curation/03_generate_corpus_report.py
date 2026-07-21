@@ -51,6 +51,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -97,7 +98,7 @@ def _load_corpus(cfg) -> pd.DataFrame:
 # Section: dataset_analysis  (replaces 04_dataset_analysis.py)
 # ─────────────────────────────────────────────────────────
 
-def _report_dataset_analysis(df: pd.DataFrame, reports_dir: Path) -> dict[str, Any]:
+def _report_dataset_analysis(df: pd.DataFrame, reports_root: str) -> dict[str, Any]:
     """
     Compute and persist overall corpus statistics.
 
@@ -129,7 +130,7 @@ def _report_dataset_analysis(df: pd.DataFrame, reports_dir: Path) -> dict[str, A
         "methods": df["method"].value_counts().to_dict(),
     }
 
-    out = reports_dir / "dataset_analysis.json"
+    out = report_path("dataset_analysis.json", reports_root)
     out.write_text(json.dumps(stats, indent=2))
 
     log.info(
@@ -149,7 +150,7 @@ def _report_dataset_analysis(df: pd.DataFrame, reports_dir: Path) -> dict[str, A
 def _report_taxonomy_inventory(
     df: pd.DataFrame,
     cfg,
-    reports_dir: Path,
+    reports_root: str,
 ) -> dict[str, Any]:
     """
     Enumerate attack-class coverage and flag gaps for augmentation targeting.
@@ -202,7 +203,7 @@ def _report_taxonomy_inventory(
         "malicious":         int((df["label"] == 1).sum()),
     }
 
-    out = reports_dir / "taxonomy_inventory.json"
+    out = report_path("taxonomy_inventory.json", reports_root)
     out.write_text(json.dumps(result, indent=2))
     log.info(f"  → {out}")
     return result
@@ -215,7 +216,7 @@ def _report_taxonomy_inventory(
 def _report_taxonomy_coverage(
     df: pd.DataFrame,
     cfg,
-    reports_dir: Path,
+    reports_root: str,
 ) -> dict[str, Any]:
     """
     Build a class × source coverage matrix for malicious records only.
@@ -246,7 +247,7 @@ def _report_taxonomy_coverage(
         "class_totals":    malicious["attack_class"].value_counts().to_dict(),
     }
 
-    out = reports_dir / "taxonomy_coverage.json"
+    out = report_path("taxonomy_coverage.json", reports_root)
     out.write_text(json.dumps(result, indent=2))
 
     if result["missing_classes"]:
@@ -262,7 +263,7 @@ def _report_taxonomy_coverage(
 def _report_length_distribution(
     df: pd.DataFrame,
     cfg,
-    reports_dir: Path,
+    reports_root: str,
 ) -> dict[str, Any]:
     """
     Compute character and estimated token-length distributions.
@@ -291,7 +292,7 @@ def _report_length_distribution(
         "truncation_strategy":               "keep method+path+headers; truncate body last",
     }
 
-    out = reports_dir / "length_distribution.json"
+    out = report_path("length_distribution.json", reports_root)
     out.write_text(json.dumps(result, indent=2))
 
     log.info(
@@ -307,7 +308,7 @@ def _report_length_distribution(
 # Section: datasheet  (replaces 05_datasheet.py)
 # ─────────────────────────────────────────────────────────
 
-def _report_datasheet(cfg, reports_dir: Path) -> dict[str, Any]:
+def _report_datasheet(cfg, reports_root: str) -> dict[str, Any]:
     """
     Write a Gebru et al. (2018) datasheet stub for the ai-waf-v2 corpus.
 
@@ -364,7 +365,7 @@ def _report_datasheet(cfg, reports_dir: Path) -> dict[str, Any]:
         "maintenance":  "maintained by project authors",
     }
 
-    out = reports_dir / "datasheet.json"
+    out = report_path("datasheet.json", reports_root)
     out.write_text(json.dumps(datasheet, indent=2))
     log.info(f"  → {out}")
     return datasheet
@@ -381,11 +382,10 @@ def run(args: argparse.Namespace) -> None:
     require_inputs({
         "data/normalized/deduped.parquet": "make data_collect",
     })
-    if check_output(Path(cfg.paths.reports) / "metrics" / "corpus_report.json", args.force, "Stage 1.3 corpus report"):
+    if check_output(report_path("corpus_report.json", cfg.paths.reports), args.force, "Stage 1.3 corpus report"):
         return
 
-    reports_dir = Path(cfg.paths.reports) / "metrics"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    reports_root = cfg.paths.reports
 
     # Determine which sections to run
     sections = set(args.section) if args.section else ALL_SECTIONS
@@ -416,26 +416,26 @@ def run(args: argparse.Namespace) -> None:
 
     if "dataset_analysis" in sections and df is not None:
         with timer.step("dataset_analysis"):
-            _report_dataset_analysis(df, reports_dir)
+            _report_dataset_analysis(df, reports_root)
 
     if "taxonomy_inventory" in sections and df is not None:
         with timer.step("taxonomy_inventory"):
-            _report_taxonomy_inventory(df, cfg, reports_dir)
+            _report_taxonomy_inventory(df, cfg, reports_root)
 
     if "taxonomy_coverage" in sections and df is not None:
         with timer.step("taxonomy_coverage"):
-            _report_taxonomy_coverage(df, cfg, reports_dir)
+            _report_taxonomy_coverage(df, cfg, reports_root)
 
     if "length_distribution" in sections and df is not None:
         with timer.step("length_distribution"):
-            _report_length_distribution(df, cfg, reports_dir)
+            _report_length_distribution(df, cfg, reports_root)
 
     if "datasheet" in sections:
         with timer.step("datasheet"):
-            _report_datasheet(cfg, reports_dir)
+            _report_datasheet(cfg, reports_root)
 
     log.info("─" * 60)
-    log.info(f"Corpus report complete. All artefacts written to {reports_dir}")
+    log.info(f"Corpus report complete. All artefacts written to {reports_root}")
 
     try:
         import mlflow
@@ -448,7 +448,7 @@ def run(args: argparse.Namespace) -> None:
             })
             if df is not None:
                 if "dataset_analysis" in sections:
-                    da_path = reports_dir / "dataset_analysis.json"
+                    da_path = report_path("dataset_analysis.json", reports_root)
                     if da_path.exists():
                         import json as _json
                         da = _json.loads(da_path.read_text())
@@ -459,7 +459,7 @@ def run(args: argparse.Namespace) -> None:
                             "imbalance_ratio": float(da.get("imbalance_ratio", 0)),
                         })
                 if "taxonomy_inventory" in sections:
-                    ti_path = reports_dir / "taxonomy_inventory.json"
+                    ti_path = report_path("taxonomy_inventory.json", reports_root)
                     if ti_path.exists():
                         import json as _json
                         ti = _json.loads(ti_path.read_text())
@@ -468,7 +468,7 @@ def run(args: argparse.Namespace) -> None:
                             "n_low_count_classes": float(len(ti.get("low_count_classes", {}))),
                         })
                 if "length_distribution" in sections:
-                    ld_path = reports_dir / "length_distribution.json"
+                    ld_path = report_path("length_distribution.json", reports_root)
                     if ld_path.exists():
                         import json as _json
                         ld = _json.loads(ld_path.read_text())
@@ -477,11 +477,11 @@ def run(args: argparse.Namespace) -> None:
                         })
                 for fname in ["dataset_analysis.json", "taxonomy_inventory.json",
                                "taxonomy_coverage.json", "length_distribution.json"]:
-                    p = reports_dir / fname
+                    p = reports_root / fname
                     if p.exists():
                         mlflow.log_artifact(str(p))
             if "datasheet" in sections:
-                ds_path = reports_dir / "datasheet.json"
+                ds_path = report_path("datasheet.json", reports_root)
                 if ds_path.exists():
                     mlflow.log_artifact(str(ds_path))
             timer.log_mlflow()

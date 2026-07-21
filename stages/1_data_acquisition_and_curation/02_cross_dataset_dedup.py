@@ -20,7 +20,7 @@ acquire/Normalize stage or the corpus report.
 
 Inputs:   data/normalized/all_datasets.parquet   (written by Stage 01)
 Outputs:  data/normalized/deduped.parquet
-          reports/metrics/dedup_stats.json
+          reports/1_data_acquisition_and_curation/metrics/02_dedup_stats.json
 
 Run:
     python stages/1_data_acquisition_and_curation/02_cross_dataset_dedup.py \\
@@ -52,6 +52,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment, log_metrics_dict
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -348,7 +349,7 @@ def run(args: argparse.Namespace) -> None:
         "exact_only":          args.exact_only,
         "timings_s":           timer.timings,
     }
-    stats_path = Path(cfg.paths.reports) / "metrics" / "dedup_stats.json"
+    stats_path = report_path("dedup_stats.json", cfg.paths.reports)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     stats_path.write_text(json.dumps(stats, indent=2))
     log.info(

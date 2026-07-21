@@ -13,6 +13,7 @@ from pathlib import Path
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -21,7 +22,7 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
 
     require_inputs({})
-    if check_output(Path(cfg.paths.reports) / "metrics" / "slos.json", args.force, "Stage 2.1 SLOs"):
+    if check_output(report_path("slos.json", cfg.paths.reports), args.force, "Stage 2.1 SLOs"):
         return
 
     slo_doc = {
@@ -52,7 +53,7 @@ def run(args: argparse.Namespace) -> None:
         "secondary_metrics": ["f1", "fpr", "recall", "auc_roc"],
     }
 
-    out = Path(cfg.paths.reports) / "metrics" / "slos.json"
+    out = report_path("slos.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(slo_doc, indent=2))
     log.info(f"SLO document written to {out}")

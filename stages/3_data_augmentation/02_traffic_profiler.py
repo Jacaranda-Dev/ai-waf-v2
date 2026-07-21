@@ -28,6 +28,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -204,7 +205,7 @@ def run(args: argparse.Namespace) -> None:
     configure_root()
     cfg = load_config(args.config)
 
-    dist_path = Path(cfg.paths.reports) / "metrics" / "traffic_distribution.json"
+    dist_path = report_path("traffic_distribution.json", cfg.paths.reports)
 
     if check_output(dist_path, args.force, "Stage 3.2 benign enrichment"):
         return
@@ -238,7 +239,7 @@ def run(args: argparse.Namespace) -> None:
         "distribution": dist.to_dict(),
         "timings_s":    timer.timings,
     }
-    sp = Path(cfg.paths.reports) / "metrics" / "traffic_profiler.json"
+    sp = report_path("traffic_profiler.json", cfg.paths.reports)
     sp.write_text(json.dumps(stats, indent=2))
 
     try:

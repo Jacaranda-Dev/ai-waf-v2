@@ -33,7 +33,7 @@ from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment
-from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.pipeline import check_output, require_inputs
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 
@@ -85,7 +85,7 @@ def _train_epoch(
             nan_streak += 1
             if nan_streak >= 20:
                 raise RuntimeError(
-                    f"Teacher training diverged: 20 consecutive non-finite losses. "
+                    "Teacher training diverged: 20 consecutive non-finite losses. "
                     "Check LR, data quality, and model dimensions."
                 )
             scaler.update()

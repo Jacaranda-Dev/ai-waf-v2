@@ -92,7 +92,7 @@ class HttpTokenizer:
         output_dir:  str | Path = "tokenizers/track_b",
         seq_len:     int  = 256,
         min_frequency: int = 2,
-    ) -> "HttpTokenizer":
+    ) -> HttpTokenizer:
         """
         Train a BPE tokenizer on the HTTP corpus and save to disk.
 
@@ -108,13 +108,15 @@ class HttpTokenizer:
         -------
         HttpTokenizer instance
         """
-        from tokenizers import Tokenizer
-        from tokenizers.models import BPE
-        from tokenizers.pre_tokenizers import Split
-        from tokenizers.trainers import BpeTrainer
-        from tokenizers.normalizers import Lowercase, Sequence as NormSeq
-        from tokenizers.processors import TemplateProcessing
         from tokenizers.decoders import BPEDecoder
+        from tokenizers.models import BPE
+        from tokenizers.normalizers import Lowercase
+        from tokenizers.normalizers import Sequence as NormSeq
+        from tokenizers.pre_tokenizers import Split
+        from tokenizers.processors import TemplateProcessing
+        from tokenizers.trainers import BpeTrainer
+
+        from tokenizers import Tokenizer
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +180,7 @@ class HttpTokenizer:
         return cls(tokenizer, seq_len=seq_len)
 
     @classmethod
-    def load(cls, tokenizer_dir: str | Path, seq_len: int = 256) -> "HttpTokenizer":
+    def load(cls, tokenizer_dir: str | Path, seq_len: int = 256) -> HttpTokenizer:
         """
         Load a saved tokenizer from disk.
 
@@ -209,11 +211,11 @@ class HttpTokenizer:
 
     # ── Public interface ──────────────────────────────
 
-    def encode(self, text: str) -> "Encoding":
+    def encode(self, text: str) -> Encoding:
         """Encode a single HTTP request string."""
         return self._tok.encode(text)
 
-    def encode_batch(self, texts: list[str]) -> list["Encoding"]:
+    def encode_batch(self, texts: list[str]) -> list[Encoding]:
         """Encode a list of HTTP request strings."""
         return self._tok.encode_batch(texts)
 
@@ -231,7 +233,7 @@ class HttpTokenizer:
         """Map integer token IDs to token strings (mirrors HuggingFace interface)."""
         return [self._tok.id_to_token(i) or "[UNK]" for i in ids]
 
-    def encode_no_truncation(self, text: str) -> "Encoding":
+    def encode_no_truncation(self, text: str) -> Encoding:
         """Encode without truncation — used by tokenizer_eval for true sequence lengths."""
         self._tok.no_truncation()
         try:

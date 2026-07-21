@@ -23,10 +23,8 @@ Run:
 from __future__ import annotations
 
 import argparse
-import math
 import time
 from pathlib import Path
-from typing import Iterator
 
 import torch
 import torch.nn as nn
@@ -41,7 +39,7 @@ from ai_waf_v2.tokenizer.http_tokenizer import HttpTokenizer
 from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.mlflow_utils import init_experiment
-from ai_waf_v2.utils.pipeline import require_inputs, check_output
+from ai_waf_v2.utils.pipeline import check_output, require_inputs
 from ai_waf_v2.utils.seed import seed_everything
 from ai_waf_v2.utils.timing import StepTimer
 

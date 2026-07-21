@@ -20,7 +20,7 @@ Consolidates all Stage 7 JSON outputs into a single structured document:
   - Deployment recommendation (from script 16 if available)
 
 Output:
-  - reports/final_evaluation_report.json
+  - reports/7_evaluation/15_final_evaluation_report.json
 
 Run:
     python stages/7_evaluation/15_generate_report.py --config config/pipeline.yaml
@@ -38,6 +38,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 log = get_logger(__name__)
 
@@ -156,15 +157,14 @@ def run(args: argparse.Namespace) -> None:
     cfg         = load_config(args.config)
 
     require_inputs({
-        f"{Path(cfg.paths.reports) / 'metrics' / 'master_comparison_table.json'}": "run 14_comparison_table.py",
+        str(report_path("master_comparison_table.json", cfg.paths.reports, mkdir=False)): "run 14_comparison_table.py",
     })
     if check_output(
-        Path(cfg.paths.reports) / "final_evaluation_report.json",
+        report_path("final_evaluation_report.json", cfg.paths.reports),
         args.force, "Stage 7.15 generate report"
     ):
         return
 
-    reports_dir = Path(cfg.paths.reports)
 
     log.info("Assembling final evaluation report...")
     timer = StepTimer()
@@ -173,7 +173,7 @@ def run(args: argparse.Namespace) -> None:
     sections: dict[str, Any] = {}
     with timer.step("load_sections"):
         for section_name, rel_path in SECTION_MANIFEST.items():
-            full_path = reports_dir / rel_path
+            full_path = report_path(Path(rel_path).name, cfg.paths.reports, mkdir=False)
             data      = _safe_load(full_path)
             if data is not None:
                 sections[section_name] = data
@@ -234,7 +234,7 @@ def run(args: argparse.Namespace) -> None:
             **sections,   # full data for each section
         }
 
-        out = reports_dir / "final_evaluation_report.json"
+        out = report_path("final_evaluation_report.json", cfg.paths.reports)
         out.write_text(json.dumps(final_report, indent=2, default=str))
         log.info(f"\nFinal evaluation report generated: {out}")
         log.info(f"  Sections included: {len(sections)}/{len(SECTION_MANIFEST)}")

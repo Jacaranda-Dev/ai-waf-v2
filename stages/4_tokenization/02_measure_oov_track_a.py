@@ -27,6 +27,7 @@ from ai_waf_v2.utils.config import load_config
 from ai_waf_v2.utils.logging import configure_root, get_logger
 from ai_waf_v2.utils.pipeline import require_inputs, check_output
 from ai_waf_v2.utils.timing import StepTimer
+from ai_waf_v2.utils.reports import report_path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from tokenizer_eval import compute_full_metrics, stratified_sample
@@ -45,7 +46,7 @@ def run(args: argparse.Namespace) -> None:
         "data/splits/val.parquet": "make data_augment_all",
     })
     if check_output(
-        Path(cfg.paths.reports) / "metrics" / "tokenizer_oov_track_a.json",
+        report_path("tokenizer_oov_track_a.json", cfg.paths.reports),
         args.force, "Stage 4.2 Track A OOV measurement"
     ):
         return
@@ -116,7 +117,7 @@ def run(args: argparse.Namespace) -> None:
     # ------------------------------------------------------------------
     # Persist
     # ------------------------------------------------------------------
-    out = Path(cfg.paths.reports) / "metrics" / "tokenizer_oov_track_a.json"
+    out = report_path("tokenizer_oov_track_a.json", cfg.paths.reports)
     out.parent.mkdir(parents=True, exist_ok=True)
     result["timings_s"] = timer.timings
     out.write_text(json.dumps(result, indent=2))

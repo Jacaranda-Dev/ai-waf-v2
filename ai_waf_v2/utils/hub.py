@@ -14,7 +14,6 @@ Set HF_ORG (or huggingface.org in pipeline.yaml) to your org/username slug.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ai_waf_v2.utils.logging import get_logger
