@@ -76,3 +76,7 @@ papers/**/*.blg
 # papers/*.pdf
 
 .claude
+*.exe 
+*.dll
+*.txt
+DLLs/*
